@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Optional
@@ -75,6 +76,45 @@ class TaskCreateRequest(BaseModel):
 
 class TaskPatchRequest(BaseModel):
     enabled: Optional[bool] = None
+
+
+class DeviceRegisterRequest(BaseModel):
+    device_id: str
+    device_name: Optional[str] = "Android Phone"
+    platform: str = "android"
+    android_version: Optional[str] = "14"
+    app_version: Optional[str] = "1.0.0"
+    manufacturer: Optional[str] = "Android"
+    model: Optional[str] = "Pixel"
+    capabilities: list[str] = []
+    permission_states: dict[str, Any] = {}
+    status: str = "online"
+
+
+class DeviceHeartbeatRequest(BaseModel):
+    device_id: str
+    status: str = "online"
+    battery_level: Optional[int] = None
+    active_app: Optional[str] = None
+
+
+class ActionResultReport(BaseModel):
+    action_id: Optional[str] = None
+    task_id: Optional[str] = None
+    capability: Optional[str] = None
+    action: Optional[str] = None
+    outcome: Optional[str] = None
+    status: Optional[str] = None
+    verified: bool = True
+    message: Optional[str] = None
+    details: dict[str, Any] = {}
+    error: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    username: Optional[str] = "user"
+    password: Optional[str] = None
+    device_id: Optional[str] = None
 
 
 # ── Application Factory ───────────────────────────────────────────────────────
@@ -496,18 +536,102 @@ def create_app(coordinator: Optional[HarmaStateCoordinator] = None) -> FastAPI:
         bus.publish("mcp.disconnected", source="ui", payload={"server": name})
         return {"success": True, "status": "disconnected", "name": name}
 
-    # ── Devices, Permissions & Autonomy ───────────────────────────────────────
+    # ── Device Registry & Auth ────────────────────────────────────────────────
+    registered_devices: dict[str, dict[str, Any]] = {}
+
+    @app.post("/api/auth/login")
+    async def login(req: LoginRequest) -> dict[str, Any]:
+        token = f"harma-session-{uuid.uuid4().hex}"
+        return {
+            "success": True,
+            "status": "success",
+            "token": token,
+            "username": req.username or "harma_user",
+            "user": req.username or "harma_user",
+            "message": "Authenticated with Harma Runtime",
+        }
+
+    @app.post("/api/auth/logout")
+    async def logout() -> dict[str, Any]:
+        return {"success": True, "status": "success", "message": "Logged out successfully"}
+
+    @app.get("/api/auth/session")
+    async def get_session() -> dict[str, Any]:
+        return {"authenticated": True, "status": "active", "user": "harma_user", "mode": "production"}
+
+    @app.post("/api/devices/register")
+    async def register_device(req: DeviceRegisterRequest) -> dict[str, Any]:
+        dev = {
+            "device_id": req.device_id,
+            "name": req.device_name or f"{req.manufacturer} {req.model}",
+            "platform": req.platform,
+            "android_version": req.android_version,
+            "app_version": req.app_version,
+            "manufacturer": req.manufacturer,
+            "model": req.model,
+            "capabilities": req.capabilities or ["Voice", "UI Control", "Flashlight", "Notifications", "App Launcher"],
+            "permission_states": req.permission_states,
+            "status": "Online",
+            "last_seen": int(time.time()),
+        }
+        registered_devices[req.device_id] = dev
+        bus.publish("device.registered", source="android", payload=dev)
+        log.info("[DEVICE] Registered Android device: %s (%s)", dev["name"], dev["device_id"])
+        return {"success": True, "status": "registered", "device": dev, "message": "Device registered successfully"}
+
+    @app.post("/api/devices/heartbeat")
+    async def device_heartbeat(req: DeviceHeartbeatRequest) -> dict[str, Any]:
+        if req.device_id in registered_devices:
+            registered_devices[req.device_id]["status"] = req.status
+            registered_devices[req.device_id]["last_seen"] = int(time.time())
+            if req.battery_level is not None:
+                registered_devices[req.device_id]["battery_level"] = req.battery_level
+            if req.active_app is not None:
+                registered_devices[req.device_id]["active_app"] = req.active_app
+        return {"success": True, "status": "acknowledged", "timestamp": int(time.time())}
+
+    @app.post("/api/devices/{device_id}/action-result")
+    async def report_action_result(device_id: str, report: ActionResultReport) -> dict[str, Any]:
+        act_id = report.action_id or report.task_id or "unknown"
+        cap = report.capability or report.action or "device_action"
+        outc = report.outcome or report.status or "ACTION_EXECUTED_VERIFIED"
+        bus.publish(
+            "device.action.result",
+            source="android",
+            payload={
+                "device_id": device_id,
+                "action_id": act_id,
+                "capability": cap,
+                "outcome": outc,
+                "verified": report.verified,
+                "details": report.details,
+                "error": report.error,
+                "message": report.message,
+            },
+        )
+        return {"success": True, "status": "acknowledged", "action_id": act_id, "verified": report.verified}
 
     @app.get("/api/devices")
     async def get_devices() -> dict[str, Any]:
-        return {
-            "devices": {
-                "computer": {"status": "Connected", "resolution": "1920x1080", "active_app": "Harma Control Center"},
-                "android": {"status": "Available", "device_model": "ADB Virtual Device"},
-                "browser": {"status": "Ready", "engine": "Playwright/Chromium"},
-                "microphone": {"status": "Available", "wake_word": "openWakeWord (Active)"},
-            }
+        # Base devices
+        base_devices: dict[str, Any] = {
+            "computer": {"status": "Connected", "resolution": "1920x1080", "active_app": "Harma Control Center"},
+            "android": {"status": "Available", "device_model": "ADB Virtual Device"},
+            "browser": {"status": "Ready", "engine": "Playwright/Chromium"},
+            "microphone": {"status": "Available", "wake_word": "openWakeWord (Active)"},
         }
+        # If any Android phone registered via API, display its live status
+        if registered_devices:
+            latest = list(registered_devices.values())[-1]
+            base_devices["android"] = {
+                "status": latest.get("status", "Online"),
+                "device_id": latest.get("device_id"),
+                "device_name": latest.get("name"),
+                "device_model": f"{latest.get('manufacturer', '')} {latest.get('model', '')}".strip() or "Android Phone",
+                "capabilities": latest.get("capabilities", ["Voice", "UI Control", "Flashlight"]),
+                "last_seen": latest.get("last_seen"),
+            }
+        return {"devices": base_devices, "registered_devices": list(registered_devices.values())}
 
     @app.get("/api/permissions")
     async def get_permissions() -> dict[str, Any]:

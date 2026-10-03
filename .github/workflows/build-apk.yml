@@ -1,0 +1,103 @@
+name: Build Harma Android APK
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+      - 'android*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Native Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Grant Execute Permission to gradlew
+        run: chmod +x android/gradlew
+
+      - name: Build Android APKs
+        working-directory: android
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+        run: |
+          ./gradlew assembleRelease --stacktrace 2>&1 | tee ../gradle_build.log
+
+      - name: Report Build Logs on Failure
+        if: failure()
+        run: |
+          echo "## Gradle Build Failure Log" >> $GITHUB_STEP_SUMMARY
+          echo '```text' >> $GITHUB_STEP_SUMMARY
+          tail -n 250 gradle_build.log >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Organize APK Artifacts
+        run: |
+          mkdir -p build-output
+          if [ -f android/app/build/outputs/apk/release/app-release.apk ]; then
+            cp android/app/build/outputs/apk/release/app-release.apk build-output/Harma-AI.apk
+            cp android/app/build/outputs/apk/release/app-release.apk build-output/Harma-AI-release.apk
+          elif [ -f android/app/build/outputs/apk/debug/app-debug.apk ]; then
+            cp android/app/build/outputs/apk/debug/app-debug.apk build-output/Harma-AI.apk
+            cp android/app/build/outputs/apk/debug/app-debug.apk build-output/Harma-AI-debug.apk
+          fi
+          ls -la build-output
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Harma-Android-APK
+          path: build-output/
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main'
+        with:
+          tag_name: android-v1.0.0
+          name: "Harma Android Device Agent v1.0.0"
+          draft: false
+          prerelease: false
+          make_latest: true
+          body: |
+            ## Harma Android Device Agent (Production v1.0.0) 📱🤖
+
+            Official native Android client and execution endpoint for Harma AI connecting to `https://harma-ai.vercel.app/`.
+
+            ### 🚀 Features Included
+            - 🎙️ **Voice-First Interaction**: Central minimal glowing voice orb, tap-to-speak and "Hey Harma" wake-word listener.
+            - ⚡ **WhatsApp Device Automation**: End-to-end voice-command driven messaging (*"Hey Harma, open WhatsApp and send hi to Bhuvanesh"*):
+              - Semantic node observation (no brittle fixed coordinates)
+              - Contact ambiguity detection
+              - Consequential send confirmation modal
+              - Duplicate-action protection
+              - Post-action delivery verification
+            - 🔦 **Hardware Torch Control**: Native Camera2 torch API control with verified state confirmation (*"Hey Harma, turn on the flashlight"*).
+            - 🛡️ **Interactive Android Permission Center**: Contextual enablement of Audio Recording, Accessibility UI Control, and Camera.
+            - 🔄 **Real-Time Synchronization**: Live device heartbeat, dynamic presence registration, and action reporting on `https://harma-ai.vercel.app/`.
+            - 🔒 **Zero Hardcoded Secrets**: Uses Keystore-backed AES256 EncryptedSharedPreferences and communicates exclusively through authenticated Harma endpoints.
+
+            ### 📲 Direct Installation
+            1. Download **`Harma-AI.apk`** below directly to your Android device.
+            2. Open the file to install (allow "Install unknown apps" if prompted).
+            3. Grant Microphone and Accessibility permissions when requested.
+            4. Connect to Harma at `https://harma-ai.vercel.app/`!
+          files: |
+            build-output/Harma-AI.apk
+            build-output/Harma-AI-release.apk

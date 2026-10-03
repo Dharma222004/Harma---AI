@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer delicate ring -->
+    <path
+        android:strokeColor="#444444"
+        android:strokeWidth="1.5"
+        android:fillColor="#00000000"
+        android:pathData="M54,54m-36,0a36,36 0 1,1 72,0a36,36 0 1,1 -72,0" />
+    <!-- Secondary orbiting ring -->
+    <path
+        android:strokeColor="#888888"
+        android:strokeWidth="1.5"
+        android:fillColor="#00000000"
+        android:pathData="M54,54m-24,0a24,24 0 1,1 48,0a24,24 0 1,1 -48,0" />
+    <!-- Solid minimalist white core -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,54m-12,0a12,12 0 1,1 24,0a12,12 0 1,1 -24,0" />
+</vector>

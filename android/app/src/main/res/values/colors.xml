@@ -1,0 +1,9 @@
+<resources>
+    <color name="black">#000000</color>
+    <color name="white">#FFFFFF</color>
+    <color name="gray_dark">#121212</color>
+    <color name="gray_card">#1E1E1E</color>
+    <color name="gray_border">#2C2C2C</color>
+    <color name="gray_text">#A0A0A0</color>
+    <color name="accent_green">#00E676</color>
+</resources>

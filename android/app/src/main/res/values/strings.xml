@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">Harma</string>
+    <string name="accessibility_service_label">Harma Assistant UI Control</string>
+    <string name="accessibility_service_description">Enables Harma to observe and interact with application interfaces to automate requested user tasks.</string>
+    <string name="voice_interaction_service_label">Harma Voice Assistant</string>
+</resources>
