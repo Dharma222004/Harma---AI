@@ -1,8 +1,7 @@
 {
-  "rewrites": [
-    {
-      "source": "/(.*)",
-      "destination": "/main.py"
+  "functions": {
+    "main.py": {
+      "includeFiles": "harma/ui/web/**,public/**,config.yaml"
     }
-  ]
+  }
 }

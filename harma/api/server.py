@@ -603,14 +603,36 @@ def create_app(coordinator: Optional[HarmaStateCoordinator] = None) -> FastAPI:
 
     # ── Static Web UI Files ───────────────────────────────────────────────────
 
-    if WEB_DIR.exists():
-        app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
+    possible_web_dirs = [
+        WEB_DIR,
+        Path.cwd() / "public",
+        Path.cwd() / "harma" / "ui" / "web",
+        Path(__file__).parent.parent.parent / "public",
+    ]
+    resolved_web_dir = None
+    for d in possible_web_dirs:
+        if d.exists() and (d / "index.html").exists():
+            resolved_web_dir = d
+            break
 
-        @app.get("/", response_class=HTMLResponse)
-        async def serve_index() -> FileResponse:
-            index_path = WEB_DIR / "index.html"
-            if index_path.exists():
-                return FileResponse(index_path)
-            return HTMLResponse("<h2>Harma Control Center loading...</h2>")
+    if resolved_web_dir:
+        static_dir = resolved_web_dir / "static" if (resolved_web_dir / "static").exists() else resolved_web_dir
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    def _find_index_file() -> Optional[Path]:
+        for d in possible_web_dirs:
+            p = d / "index.html"
+            if p.exists():
+                return p
+        return None
+
+    @app.get("/", response_class=HTMLResponse)
+    @app.get("/index.html", response_class=HTMLResponse)
+    @app.get("/main.py", response_class=HTMLResponse)
+    async def serve_index() -> Any:
+        idx = _find_index_file()
+        if idx:
+            return FileResponse(idx)
+        return HTMLResponse("<h2>Harma Control Center loading...</h2>")
 
     return app

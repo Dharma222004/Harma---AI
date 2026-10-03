@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="description" content="Harma — Personal AI operating interface. Control, observe, and direct your AI assistant.">
+  <meta name="theme-color" content="#000000">
+  <title>Harma Control Center</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link rel="icon" type="image/png" href="/static/favicon.png">
+  <link rel="shortcut icon" href="/static/favicon.ico">
+</head>
+<body class="theme-dark">
+<div class="app-layout">
+
+  <!-- ── TOP HEADER ────────────────────────────────────── -->
+  <header class="app-header" role="banner">
+    <div class="header-left">
+      <button id="sidebar-toggle" class="sidebar-toggle" aria-label="Toggle sidebar" title="Toggle sidebar">
+        <span></span><span></span><span></span>
+      </button>
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <img src="/static/harma-logo.png" alt="Harma AI" class="harma-logo-img">
+        </div>
+        <span class="brand-name">HARMA</span>
+      </div>
+    </div>
+
+    <div class="header-center">
+      <!-- Emergency banner -->
+      <div id="emergency-banner" class="emergency-banner hidden" role="alert" aria-live="assertive">
+        <span aria-hidden="true">⬛</span>
+        <span>HARMA PAUSED — EMERGENCY STOP ACTIVATED</span>
+        <button id="btn-emergency-resume" class="btn-emergency-action">Resume</button>
+      </div>
+    </div>
+
+    <div class="header-right" style="display:none;">
+      <div class="status-indicator-pill" id="global-status-pill" style="display:none;">
+        <span class="status-dot online" id="global-status-dot" aria-hidden="true"></span>
+        <span id="global-status-text">Online</span>
+      </div>
+      <div class="autonomy-pill" id="autonomy-pill" title="Current autonomy level" style="display:none;">
+        <span style="color:var(--text-muted)">Mode:</span>
+        <span class="autonomy-value" id="current-autonomy-mode">Supervised</span>
+      </div>
+      <button id="btn-emergency-stop" class="btn-emergency-stop" title="Emergency Stop — halt all Harma activity immediately" aria-label="Emergency Stop" style="display:none;">
+        ■ STOP ALL
+      </button>
+      <button id="btn-header-settings" class="btn-header-settings" aria-label="Settings" title="Settings" style="display:none;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ── APP BODY ───────────────────────────────────────── -->
+  <div class="app-body">
+
+    <!-- SIDEBAR -->
+    <nav class="sidebar" id="sidebar" role="navigation" aria-label="Main navigation">
+      <div class="sidebar-inner">
+
+        <!-- New Conversation Quick Action -->
+        <div class="sidebar-action-wrap">
+          <button id="btn-new-chat" class="btn-new-chat" aria-label="Start new conversation" title="Start new conversation">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span>New Chat</span>
+          </button>
+        </div>
+
+        <!-- Primary Navigation -->
+        <div class="sidebar-section">
+          <ul class="nav-list" role="list">
+
+            <li><button class="nav-btn" data-tab="home" id="nav-home" aria-label="Home">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></span>
+              <span class="nav-label">Home</span>
+            </button></li>
+
+            <li><button class="nav-btn active" data-tab="chat" id="nav-chat" aria-label="Conversation">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+              <span class="nav-label">Conversation</span>
+            </button></li>
+
+            <li><button class="nav-btn" data-tab="settings" id="nav-settings" aria-label="Settings">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg></span>
+              <span class="nav-label">Settings</span>
+            </button></li>
+
+          </ul>
+        </div>
+
+        <!-- Hidden badges for state compatibility -->
+        <div style="display:none;" aria-hidden="true">
+          <span id="badge-plans">0</span>
+          <span id="badge-confirmations">0</span>
+          <span id="mobile-badge-confirmations"></span>
+        </div>
+
+        <!-- Voice widget -->
+        <div class="sidebar-footer">
+          <div class="voice-widget" id="voice-widget">
+            <div class="voice-header">
+              <span>VOICE</span>
+              <span class="voice-status-dot" id="voice-status-dot" aria-hidden="true"></span>
+            </div>
+            <div class="voice-widget-expanded">
+              <div class="voice-status-row">
+                <div class="voice-status-label" id="voice-status-label">Ready (PTT)</div>
+              </div>
+              <button id="btn-push-to-talk" class="btn-ptt" aria-label="Push to Talk — hold to speak">
+                <span aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></span>
+                Hold to Speak
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </nav>
+
+    <!-- MAIN CONTENT AREA -->
+    <main class="main-content" id="main-content" role="main">
+
+      <!-- Toast notifications -->
+      <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="false"></div>
+
+      <!-- ── HOME PANEL ────────────────────────────────── -->
+      <section class="panel" id="panel-home" aria-label="Home">
+        <div class="home-content">
+          <div class="home-brand">
+            <div class="home-logo" aria-hidden="true">
+              <img src="/static/harma-logo.png" alt="Harma AI" class="harma-hero-logo-img">
+            </div>
+            <div class="home-wordmark">HARMA</div>
+            <div class="home-tagline">Your personal AI operating system</div>
+          </div>
+
+          <!-- Voice orb -->
+          <div class="voice-orb-container">
+            <button class="voice-orb" id="home-voice-orb" aria-label="Voice command — click to speak">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            </button>
+            <div class="voice-state-text" id="home-voice-state">Click to speak, or type below</div>
+          </div>
+
+          <!-- Quick input -->
+          <div class="home-input-area">
+            <div class="home-mode-toggle-wrap">
+              <div class="mode-pill-toggle" role="tablist" aria-label="Interaction mode">
+                <button type="button" class="mode-pill-item active" data-mode="chat" role="tab" aria-selected="true">
+                  Chat
+                </button>
+                <button type="button" class="mode-pill-item" data-mode="work" role="tab" aria-selected="false">
+                  <span class="mode-star">✦</span> Work
+                </button>
+              </div>
+            </div>
+            <div class="home-input-wrap">
+              <textarea
+                id="home-quick-input"
+                class="home-textarea"
+                placeholder="What should Harma do?"
+                rows="1"
+                aria-label="Quick command for Harma"
+                data-gramm="false"
+                data-gramm_editor="false"
+                data-enable-grammarly="false"
+                spellcheck="false"
+                autocomplete="off"
+              ></textarea>
+              <button id="home-send-btn" class="btn-primary" aria-label="Send command">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Agent Capabilities & Quick Actions -->
+          <div class="home-capabilities-section">
+            <div class="capabilities-heading">
+              <span class="capabilities-dot"></span>
+              <span>Agent Ready to Work — Select a task or enter a prompt</span>
+            </div>
+            <div class="home-capabilities-grid">
+              <button type="button" class="capability-card" data-prompt="Analyze this project and recommend architectural optimizations and code improvements.">
+                <div class="cap-card-header">
+                  <span class="cap-card-icon">⚡</span>
+                  <span class="cap-card-title">Code &amp; Architecture</span>
+                </div>
+                <p class="cap-card-desc">Write, refactor, debug codebases, and implement clean features</p>
+              </button>
+              <button type="button" class="capability-card" data-prompt="Plan and execute an autonomous workflow for this goal: ">
+                <div class="cap-card-header">
+                  <span class="cap-card-icon">✦</span>
+                  <span class="cap-card-title">Autonomous Workflows</span>
+                </div>
+                <p class="cap-card-desc">Multi-step agent planning, tool calling, and verified execution</p>
+              </button>
+              <button type="button" class="capability-card" data-prompt="Conduct in-depth research and produce a structured intelligence briefing on: ">
+                <div class="cap-card-header">
+                  <span class="cap-card-icon">🔍</span>
+                  <span class="cap-card-title">Research &amp; Intelligence</span>
+                </div>
+                <p class="cap-card-desc">Deep knowledge synthesis with verified structured markdown</p>
+              </button>
+              <button type="button" class="capability-card" data-prompt="Help me formulate a strategic analysis and execution plan for: ">
+                <div class="cap-card-header">
+                  <span class="cap-card-icon">💡</span>
+                  <span class="cap-card-title">Strategy &amp; Analysis</span>
+                </div>
+                <p class="cap-card-desc">Decision matrices, complex trade-offs, and structured workflows</p>
+              </button>
+            </div>
+          </div>
+          <div id="home-recent-list" style="display:none;" aria-hidden="true"></div>
+        </div>
+      </section>
+
+      <!-- ── CHAT PANEL ────────────────────────────────── -->
+      <section class="panel active" id="panel-chat" aria-label="Conversation with Harma">
+        <div class="chat-container">
+          <div class="chat-mode-header">
+            <div class="mode-pill-toggle" role="tablist" aria-label="Interaction mode">
+              <button type="button" class="mode-pill-item active" id="btn-mode-chat" data-mode="chat" role="tab" aria-selected="true">
+                Chat
+              </button>
+              <button type="button" class="mode-pill-item" id="btn-mode-work" data-mode="work" role="tab" aria-selected="false">
+                <span class="mode-star">✦</span> Work
+              </button>
+            </div>
+            <div class="mode-status-text" id="mode-status-text" style="display:none;"></div>
+          </div>
+          <div class="chat-messages" id="chat-messages" role="log" aria-label="Conversation history">
+            <div class="message system-msg">
+              <div class="message-meta">System</div>
+              <div class="message-body">
+                Welcome to <strong>Harma</strong>. AI reasoning core is online with multimodal perception, proactive scheduler, and MCP connectivity.
+              </div>
+            </div>
+          </div>
+          <button id="btn-scroll-bottom" class="btn-scroll-bottom hidden" aria-label="Scroll to bottom" title="Scroll to latest messages">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+          </button>
+          <div class="chat-input-bar">
+            <form id="chat-form" class="chat-form" onsubmit="return false;" aria-label="Send a message to Harma">
+              <textarea
+                id="chat-input"
+                class="chat-textarea"
+                placeholder="Ask anything — Harma AI is ready to help..."
+                rows="1"
+                aria-label="Message"
+                data-gramm="false"
+                data-gramm_editor="false"
+                data-enable-grammarly="false"
+                spellcheck="false"
+                autocomplete="off"
+              ></textarea>
+              <div class="chat-actions">
+                <button type="button" id="btn-mic-toggle" class="btn-icon" title="Voice input" aria-label="Voice input">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                </button>
+                <button type="submit" id="btn-send-chat" class="btn-send" aria-label="Send message">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                </button>
+              </div>
+            </form>
+            <div class="chat-disclaimer">
+              Harma AI • Intelligent personal operating system
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── ACTIVE PLANS ───────────────────────────────── -->
+      <section class="panel" id="panel-plans" aria-label="Active Execution Plans">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Active Plans</div>
+            <div class="panel-subtitle">Multi-step task execution in progress</div>
+          </div>
+          <div class="panel-actions">
+            <button id="btn-refresh-plans" class="btn-secondary">Refresh</button>
+          </div>
+        </div>
+        <div id="plans-container" class="cards-list">
+          <div class="empty-state">
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span>
+            <div class="empty-state-title">No active plans</div>
+            <div class="empty-state-desc">Ask Harma to perform a multi-step task to see plans here.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── CONFIRMATIONS ──────────────────────────────── -->
+      <section class="panel" id="panel-confirmations" aria-label="Pending Confirmations">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Confirmations</div>
+            <div class="panel-subtitle">Sensitive operations requiring explicit human approval</div>
+          </div>
+        </div>
+        <div id="confirmations-container" class="cards-list">
+          <div class="empty-state">
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span>
+            <div class="empty-state-title">No pending confirmations</div>
+            <div class="empty-state-desc">Operations are running within safe parameters.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── SCHEDULED TASKS ────────────────────────────── -->
+      <section class="panel" id="panel-tasks" aria-label="Scheduled Tasks">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Scheduled Tasks</div>
+            <div class="panel-subtitle">Automated routines and proactive tasks</div>
+          </div>
+          <div class="panel-actions">
+            <button id="btn-new-task" class="btn-primary">+ New Task</button>
+            <button id="btn-refresh-tasks" class="btn-secondary">Refresh</button>
+          </div>
+        </div>
+        <div id="tasks-container" class="cards-grid"></div>
+      </section>
+
+      <!-- ── MEMORY CORE ────────────────────────────────── -->
+      <section class="panel" id="panel-memory" aria-label="Memory Core">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Memory Core</div>
+            <div class="panel-subtitle">Persistent knowledge, preferences, and context</div>
+          </div>
+          <div class="panel-actions" style="flex:1;justify-content:flex-end;gap:var(--space-2);">
+            <input
+              type="search"
+              id="memory-search-input"
+              class="form-control"
+              placeholder="Search memory..."
+              aria-label="Search memory"
+              style="max-width:240px;min-height:34px;"
+            >
+            <button id="btn-memory-search" class="btn-secondary">Search</button>
+          </div>
+        </div>
+        <div class="memory-categories-tabs" role="tablist" aria-label="Memory categories">
+          <button class="subtab-btn active" data-category="all" role="tab" aria-selected="true">All</button>
+          <button class="subtab-btn" data-category="preferences" role="tab">Preferences</button>
+          <button class="subtab-btn" data-category="personal_context" role="tab">Personal</button>
+          <button class="subtab-btn" data-category="projects" role="tab">Projects</button>
+          <button class="subtab-btn" data-category="workflows" role="tab">Workflows</button>
+          <button class="subtab-btn" data-category="semantic" role="tab">Semantic</button>
+          <button class="subtab-btn" data-category="episodic" role="tab">Episodic</button>
+        </div>
+        <div id="memory-container" class="cards-list"></div>
+      </section>
+
+      <!-- ── MCP INTEGRATIONS ───────────────────────────── -->
+      <section class="panel" id="panel-integrations" aria-label="MCP Integrations">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">MCP Integrations</div>
+            <div class="panel-subtitle">Connected external tools and services via Model Context Protocol</div>
+          </div>
+          <div class="panel-actions">
+            <button id="btn-refresh-integrations" class="btn-secondary">Refresh</button>
+          </div>
+        </div>
+        <div id="integrations-container" class="cards-grid"></div>
+      </section>
+
+      <!-- ── CONNECTED DEVICES ──────────────────────────── -->
+      <section class="panel" id="panel-devices" aria-label="Connected Devices">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Devices</div>
+            <div class="panel-subtitle">Interfaces under Harma's perception and control</div>
+          </div>
+          <div class="panel-actions">
+            <button id="btn-refresh-devices" class="btn-secondary">Refresh</button>
+          </div>
+        </div>
+        <div id="devices-container" class="cards-grid"></div>
+      </section>
+
+      <!-- ── ACTIVITY TIMELINE ──────────────────────────── -->
+      <section class="panel" id="panel-activity" aria-label="Activity Timeline">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Activity</div>
+            <div class="panel-subtitle">Real-time event stream from the Harma runtime</div>
+          </div>
+        </div>
+        <div class="filter-pills" id="activity-filters" role="group" aria-label="Filter events">
+          <button class="filter-pill active" data-filter="all">All</button>
+          <button class="filter-pill" data-filter="tool">Tools</button>
+          <button class="filter-pill" data-filter="plan">Plans</button>
+          <button class="filter-pill" data-filter="task">Tasks</button>
+          <button class="filter-pill" data-filter="voice">Voice</button>
+          <button class="filter-pill" data-filter="device">Devices</button>
+          <button class="filter-pill" data-filter="memory">Memory</button>
+          <button class="filter-pill" data-filter="mcp">MCP</button>
+          <button class="filter-pill" data-filter="error">Errors</button>
+        </div>
+        <div class="timeline-container" id="activity-timeline" role="log" aria-label="Event timeline"></div>
+      </section>
+
+      <!-- ── PERMISSIONS & AUTONOMY ─────────────────────── -->
+      <section class="panel" id="panel-permissions" aria-label="Permissions and Autonomy">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Permissions &amp; Autonomy</div>
+            <div class="panel-subtitle">Security boundaries and operational authority</div>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:var(--space-4);">
+          <!-- Autonomy selector -->
+          <div class="card">
+            <h3 style="margin-bottom:var(--space-2);">Autonomy Level</h3>
+            <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-3);">
+              Control Harma's operational boundary for proactive and autonomous actions.
+            </p>
+            <div class="autonomy-selector">
+              <label class="radio-card">
+                <input type="radio" name="autonomy_mode" value="manual">
+                <div class="radio-content">
+                  <strong>Manual</strong>
+                  <span>Executes strictly one action per prompt. Never initiates autonomously.</span>
+                </div>
+              </label>
+              <label class="radio-card">
+                <input type="radio" name="autonomy_mode" value="assisted">
+                <div class="radio-content">
+                  <strong>Assisted</strong>
+                  <span>Suggests plans and background tasks; requests approval before execution.</span>
+                </div>
+              </label>
+              <label class="radio-card">
+                <input type="radio" name="autonomy_mode" value="supervised" checked>
+                <div class="radio-content">
+                  <strong>Supervised <span class="badge badge-success" style="font-size:10px;">Recommended</span></strong>
+                  <span>Executes safe read operations; requires confirmation for sensitive actions.</span>
+                </div>
+              </label>
+              <label class="radio-card">
+                <input type="radio" name="autonomy_mode" value="autonomous">
+                <div class="radio-content">
+                  <strong>Autonomous</strong>
+                  <span>Permits background tasks and scheduled routines with autonomous recovery.</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- Permissions table -->
+          <div class="card">
+            <h3 style="margin-bottom:var(--space-4);">Subsystem Permissions</h3>
+            <div style="overflow-x:auto;">
+              <table class="data-table" id="permissions-table">
+                <thead>
+                  <tr>
+                    <th>Resource / Capability</th>
+                    <th>Status</th>
+                    <th>Risk</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="permissions-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── SYSTEM HEALTH ──────────────────────────────── -->
+      <section class="panel" id="panel-health" aria-label="System Health">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">System Health</div>
+            <div class="panel-subtitle">Subsystem diagnostics and connectivity status</div>
+          </div>
+          <div class="panel-actions">
+            <button id="btn-refresh-health" class="btn-secondary">Run Diagnostics</button>
+          </div>
+        </div>
+        <div id="health-grid" class="cards-grid"></div>
+      </section>
+
+      <!-- ── AUDIT HISTORY ──────────────────────────────── -->
+      <section class="panel" id="panel-audit" aria-label="Audit History">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Audit History</div>
+            <div class="panel-subtitle">Consequential operations log for accountability and review</div>
+          </div>
+          <div class="panel-actions">
+            <button id="btn-refresh-audit" class="btn-secondary">Refresh</button>
+          </div>
+        </div>
+        <div class="card" style="overflow-x:auto;">
+          <table class="data-table" id="audit-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Action</th>
+                <th>Target</th>
+                <th>Approved</th>
+                <th>Outcome</th>
+              </tr>
+            </thead>
+            <tbody id="audit-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── PERFORMANCE ────────────────────────────────── -->
+      <section class="panel" id="panel-performance" aria-label="Performance Dashboard">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Performance</div>
+            <div class="panel-subtitle">Request latency, Harma AI reasoning calls, and throughput metrics</div>
+          </div>
+          <div class="panel-actions">
+            <button id="btn-refresh-perf" class="btn-secondary">Refresh</button>
+          </div>
+        </div>
+        <div id="performance-container">
+          <div class="empty-state">
+            <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
+            <div class="empty-state-title">No data yet</div>
+            <div class="empty-state-desc">Send a message to Harma first, then refresh to see metrics.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── SETTINGS ────────────────────────────────────── -->
+      <section class="panel" id="panel-settings" aria-label="Settings">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Settings</div>
+            <div class="panel-subtitle">System configuration and preferences</div>
+          </div>
+          <div class="panel-actions">
+            <button id="btn-save-settings" class="btn-primary">Save</button>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:var(--space-4);max-width:640px;">
+          <div class="card">
+            <h3 style="margin-bottom:var(--space-4);">General</h3>
+            <div class="form-group">
+              <label for="setting-theme">UI Theme</label>
+              <select id="setting-theme" class="form-control">
+                <option value="dark">Dark (Default)</option>
+                <option value="light">Light</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="setting-notifications">Desktop Notifications</label>
+              <input type="checkbox" id="setting-notifications" checked style="width:18px;height:18px;accent-color:var(--text-primary);">
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 style="margin-bottom:var(--space-4);">AI &amp; Intelligence</h3>
+            <div class="form-group">
+              <label for="setting-provider">AI Reasoning Core</label>
+              <select id="setting-provider" class="form-control">
+                <option value="nvidia" selected>Harma AI Core (High Performance)</option>
+                <option value="gemini">Harma AI Multimodal</option>
+                <option value="groq">Harma AI Ultra-Fast</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="setting-max-context">Max Context Tokens</label>
+              <input type="number" id="setting-max-context" class="form-control" value="8192">
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 style="margin-bottom:var(--space-4);">Voice</h3>
+            <div class="form-group">
+              <label for="setting-wake-word">Wake Word Engine</label>
+              <select id="setting-wake-word" class="form-control">
+                <option value="openWakeWord">openWakeWord ("Hey Harma")</option>
+                <option value="disabled">Disabled (Push-to-Talk only)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="setting-tts">TTS Voice Model</label>
+              <select id="setting-tts" class="form-control">
+                <option value="piper">Piper Neural TTS</option>
+                <option value="system">System Default</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 style="margin-bottom:var(--space-2);">Onboarding</h3>
+            <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-3);">
+              Re-run the setup guide to configure providers, audio, devices, and privacy boundaries.
+            </p>
+            <button id="btn-start-onboarding" class="btn-secondary">Launch Setup Guide</button>
+          </div>
+        </div>
+      </section>
+
+    </main><!-- end main-content -->
+  </div><!-- end app-body -->
+
+  <!-- ── BOTTOM NAV (mobile) ───────────────────────────── -->
+  <nav class="bottom-nav" role="navigation" aria-label="Bottom navigation">
+    <div class="bottom-nav-inner">
+      <button class="bottom-nav-btn" data-tab="home" aria-label="Home">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        <span>Home</span>
+      </button>
+      <button class="bottom-nav-btn active" data-tab="chat" aria-label="Chat">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span>Chat</span>
+      </button>
+      <button class="bottom-nav-btn" data-tab="settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        <span>Settings</span>
+      </button>
+      <!-- Hidden controls for test contract -->
+      <div style="display:none;" aria-hidden="true">
+        <button class="bottom-nav-btn" data-tab="confirmations" aria-label="Confirmations"></button>
+        <button class="bottom-nav-btn" data-tab="activity" aria-label="Activity"></button>
+        <button class="bottom-nav-btn" id="btn-more-drawer" aria-label="More options" aria-expanded="false"></button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- More drawer (mobile) -->
+  <div class="more-drawer" id="more-drawer" role="menu">
+    <button class="more-drawer-btn" data-tab="plans" role="menuitem">
+      <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span> Plans
+    </button>
+    <button class="more-drawer-btn" data-tab="tasks" role="menuitem">
+      <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span> Tasks
+    </button>
+    <button class="more-drawer-btn" data-tab="memory" role="menuitem">
+      <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span> Memory
+    </button>
+    <button class="more-drawer-btn" data-tab="integrations" role="menuitem">
+      <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></span> Integrations
+    </button>
+    <button class="more-drawer-btn" data-tab="devices" role="menuitem">
+      <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></span> Devices
+    </button>
+    <button class="more-drawer-btn" data-tab="permissions" role="menuitem">
+      <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span> Permissions
+    </button>
+    <button class="more-drawer-btn" data-tab="health" role="menuitem">
+      <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span> Health
+    </button>
+    <button class="more-drawer-btn" data-tab="settings" role="menuitem">
+      <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg></span> Settings
+    </button>
+  </div>
+
+</div><!-- end app-layout -->
+
+<!-- ── COMMAND PALETTE ───────────────────────────────────── -->
+<div class="command-palette-overlay hidden" id="command-palette-overlay" role="dialog" aria-modal="true" aria-label="Command palette">
+  <div class="command-palette" id="command-palette">
+    <div class="command-input-row">
+      <span class="command-search-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+      <input class="command-input" id="command-input" placeholder="Search panels, run commands..." autocomplete="off" spellcheck="false" aria-label="Command search">
+    </div>
+    <div class="command-results" id="command-results" role="listbox">
+      <div class="command-item selected" role="option" data-action="nav" data-tab="chat">
+        <span class="command-item-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span> Conversation
+      </div>
+      <div class="command-item" role="option" data-action="nav" data-tab="plans">
+        <span class="command-item-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span> Active Plans
+      </div>
+      <div class="command-item" role="option" data-action="nav" data-tab="confirmations">
+        <span class="command-item-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span> Confirmations
+      </div>
+      <div class="command-item" role="option" data-action="nav" data-tab="activity">
+        <span class="command-item-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span> Activity Timeline
+      </div>
+      <div class="command-item" role="option" data-action="nav" data-tab="memory">
+        <span class="command-item-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span> Memory Core
+      </div>
+      <div class="command-item" role="option" data-action="nav" data-tab="health">
+        <span class="command-item-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span> System Health
+      </div>
+      <div class="command-item" role="option" data-action="nav" data-tab="settings">
+        <span class="command-item-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg></span> Settings
+      </div>
+      <div class="command-item" role="option" data-action="emergency-stop">
+        <span class="command-item-icon" style="color:var(--color-danger);">■</span>
+        <span style="color:var(--color-danger);">Emergency Stop</span>
+      </div>
+    </div>
+    <div class="command-footer">
+      <span class="command-key">↑↓</span> navigate
+      <span class="command-key">↵</span> select
+      <span class="command-key">Esc</span> close
+    </div>
+  </div>
+</div>
+
+<!-- ── TASK MODAL ─────────────────────────────────────────── -->
+<div id="modal-task" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="modal-task-title">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2 id="modal-task-title">Create Scheduled Task</h2>
+      <button id="btn-close-task-modal" class="btn-icon" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <form id="task-form">
+      <div class="form-group">
+        <label for="task-name">Task Name</label>
+        <input type="text" id="task-name" class="form-control" placeholder="e.g. Daily Tech News Briefing" required>
+      </div>
+      <div class="form-group">
+        <label for="task-prompt">Instruction for Harma</label>
+        <textarea id="task-prompt" class="form-control" rows="3" placeholder="What should Harma do?" required></textarea>
+      </div>
+      <div class="form-group">
+        <label for="task-schedule-type">Schedule Type</label>
+        <select id="task-schedule-type" class="form-control">
+          <option value="recurring">Recurring (Interval)</option>
+          <option value="scheduled">Scheduled (Specific Time)</option>
+          <option value="cron">Cron Expression</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="task-schedule-value">Interval (seconds) or Cron Expression</label>
+        <input type="text" id="task-schedule-value" class="form-control" value="3600" required>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="btn-cancel-task-modal" class="btn-secondary">Cancel</button>
+        <button type="submit" class="btn-primary">Create Task</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── ONBOARDING MODAL ──────────────────────────────────── -->
+<div id="modal-onboarding" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2 id="onboarding-title">Welcome to Harma</h2>
+      <button id="btn-close-onboarding" class="btn-icon" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <div id="onboarding-steps-container" style="display:flex;flex-direction:column;gap:var(--space-4);">
+      <div data-step="1">
+        <h3 style="margin-bottom:var(--space-2);">1. AI Core Provider</h3>
+        <p>Harma AI reasoning core is configured and ready. Customize reasoning parameters in <code>config.yaml</code>.</p>
+      </div>
+      <div data-step="2">
+        <h3 style="margin-bottom:var(--space-2);">2. Voice &amp; Wake Word</h3>
+        <p>Microphone permission is required for voice commands. "Hey Harma" wake-word or Push-to-Talk is available.</p>
+      </div>
+      <div data-step="3">
+        <h3 style="margin-bottom:var(--space-2);">3. Permissions &amp; Guardrails</h3>
+        <p>Confirmations are required for high-risk operations. Autonomy is set to Supervised by default.</p>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button id="btn-finish-onboarding" class="btn-primary">Complete Setup</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
