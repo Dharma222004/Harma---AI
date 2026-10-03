@@ -16,6 +16,14 @@ import argparse
 import asyncio
 import sys
 
+# ── Vercel & ASGI Entrypoint ──────────────────────────────────────────────────
+# Vercel Serverless Functions require top-level "app", "application", or "handler".
+from harma.api.server import create_app
+
+app = create_app()
+application = app
+handler = app
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(

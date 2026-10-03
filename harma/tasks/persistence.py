@@ -30,7 +30,12 @@ class TaskStore:
 
     def __init__(self, db_path: str = DEFAULT_TASK_DB_PATH) -> None:
         self.db_path = db_path
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        try:
+            Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            import tempfile
+            self.db_path = str(Path(tempfile.gettempdir()) / Path(self.db_path).name)
+            Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
     @contextlib.contextmanager

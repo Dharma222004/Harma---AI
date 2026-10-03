@@ -76,11 +76,23 @@ class ExperienceStore:
         self.db_path = str(db_path)
         self._lock = threading.RLock()
         if self.db_path != ":memory:":
-            Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=10.0)
+            try:
+                Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                import tempfile
+                self.db_path = str(Path(tempfile.gettempdir()) / Path(self.db_path).name)
+                Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self._conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=10.0)
+        except (sqlite3.OperationalError, OSError):
+            self.db_path = ":memory:"
+            self._conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=10.0)
         self._conn.row_factory = sqlite3.Row
         if self.db_path != ":memory:":
-            self._conn.execute("PRAGMA journal_mode=WAL;")
+            try:
+                self._conn.execute("PRAGMA journal_mode=WAL;")
+            except Exception:
+                pass
         with self._lock:
             for stmt in _SCHEMA:
                 self._conn.execute(stmt)

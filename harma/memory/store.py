@@ -113,16 +113,28 @@ class SQLiteMemoryStore:
     def initialize(self) -> None:
         """Open DB connection and create schema if needed."""
         try:
-            path = Path(self._db_path)
-            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                path = Path(self._db_path)
+                path.parent.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                import tempfile
+                self._db_path = str(Path(tempfile.gettempdir()) / "harma_memory.db")
+                Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
 
-            self._conn = sqlite3.connect(
-                self._db_path,
-                check_same_thread=False,
-                timeout=10.0,
-            )
+            try:
+                self._conn = sqlite3.connect(
+                    self._db_path,
+                    check_same_thread=False,
+                    timeout=10.0,
+                )
+            except (sqlite3.OperationalError, OSError):
+                self._conn = sqlite3.connect(":memory:", check_same_thread=False, timeout=10.0)
+
             self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA journal_mode=WAL;")
+            try:
+                self._conn.execute("PRAGMA journal_mode=WAL;")
+            except Exception:
+                pass
             self._conn.execute("PRAGMA foreign_keys=ON;")
             self._conn.execute("PRAGMA synchronous=NORMAL;")
 
