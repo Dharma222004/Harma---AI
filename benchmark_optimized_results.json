@@ -1,0 +1,146 @@
+[
+  {
+    "benchmark": "Benchmark A: Direct Response",
+    "prompt": "Hello Harma",
+    "total_ms": 1524.9,
+    "llm_calls_count": 1,
+    "llm_latency_ms": 1521.4,
+    "tokens_in": 1170,
+    "tokens_out": 37,
+    "tool_discovery_ms": 0.3,
+    "tool_execution_ms": 0.0,
+    "memory_retrieval_ms": 0.0,
+    "selected_tools": 0,
+    "total_tools": 101,
+    "tool_calls_count": 0,
+    "tool_names": [],
+    "verification_status": "unverified",
+    "response_preview": "Hello! How can I help you today?"
+  },
+  {
+    "benchmark": "Benchmark B: Deterministic Tool",
+    "prompt": "What time is it?",
+    "total_ms": 3.6,
+    "llm_calls_count": 0,
+    "llm_latency_ms": 0.0,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "tool_discovery_ms": 0.0,
+    "tool_execution_ms": 0.8,
+    "memory_retrieval_ms": 0.0,
+    "selected_tools": 1,
+    "total_tools": 101,
+    "tool_calls_count": 1,
+    "tool_names": [
+      "get_current_time"
+    ],
+    "verification_status": "verified",
+    "response_preview": "Friday, 02 October 2026  08:51 PM India Standard Time"
+  },
+  {
+    "benchmark": "Benchmark C: Single Computer Action",
+    "prompt": "Open Chrome",
+    "total_ms": 12625.3,
+    "llm_calls_count": 1,
+    "llm_latency_ms": 3745.3,
+    "tokens_in": 2255,
+    "tokens_out": 58,
+    "tool_discovery_ms": 0.2,
+    "tool_execution_ms": 8874.1,
+    "memory_retrieval_ms": 1.8,
+    "selected_tools": 8,
+    "total_tools": 101,
+    "tool_calls_count": 1,
+    "tool_names": [
+      "open_application"
+    ],
+    "verification_status": "action_executed_unverified",
+    "response_preview": "Done. I opened Chrome."
+  },
+  {
+    "benchmark": "Benchmark D: Multi-Step Computer",
+    "prompt": "Open WhatsApp and check if Dharmadurai is visible",
+    "total_ms": 16256.0,
+    "llm_calls_count": 4,
+    "llm_latency_ms": 1722.0,
+    "tokens_in": 16408,
+    "tokens_out": 567,
+    "tool_discovery_ms": 0.3,
+    "tool_execution_ms": 7.1,
+    "memory_retrieval_ms": 2.1,
+    "selected_tools": 19,
+    "total_tools": 101,
+    "tool_calls_count": 4,
+    "tool_names": [
+      "open_application",
+      "focus_application",
+      "observe_screen",
+      "find_ui_element"
+    ],
+    "verification_status": "failed",
+    "response_preview": "Completed action: find_ui_element."
+  },
+  {
+    "benchmark": "Benchmark E: Browser Task",
+    "prompt": "Open Chrome and navigate to https://example.com",
+    "total_ms": 36847.7,
+    "llm_calls_count": 4,
+    "llm_latency_ms": 2060.5,
+    "tokens_in": 15866,
+    "tokens_out": 844,
+    "tool_discovery_ms": 0.4,
+    "tool_execution_ms": 8767.0,
+    "memory_retrieval_ms": 1.6,
+    "selected_tools": 20,
+    "total_tools": 101,
+    "tool_calls_count": 4,
+    "tool_names": [
+      "focus_application",
+      "open_application",
+      "focus_application",
+      "open_application"
+    ],
+    "verification_status": "action_executed_unverified",
+    "response_preview": "Completed action: open_application."
+  },
+  {
+    "benchmark": "Benchmark F: MCP Task",
+    "prompt": "Show status of external integrations",
+    "total_ms": 6783.8,
+    "llm_calls_count": 2,
+    "llm_latency_ms": 5610.7,
+    "tokens_in": 5763,
+    "tokens_out": 89,
+    "tool_discovery_ms": 0.2,
+    "tool_execution_ms": 0.7,
+    "memory_retrieval_ms": 1.1,
+    "selected_tools": 8,
+    "total_tools": 101,
+    "tool_calls_count": 1,
+    "tool_names": [
+      "integrations.list"
+    ],
+    "verification_status": "verified",
+    "response_preview": "No external integrations are currently configured."
+  },
+  {
+    "benchmark": "Benchmark G: Memory Task",
+    "prompt": "Remember that my favourite programming language is Rust",
+    "total_ms": 2844.0,
+    "llm_calls_count": 2,
+    "llm_latency_ms": 1817.4,
+    "tokens_in": 7387,
+    "tokens_out": 172,
+    "tool_discovery_ms": 0.3,
+    "tool_execution_ms": 2.0,
+    "memory_retrieval_ms": 2.1,
+    "selected_tools": 11,
+    "total_tools": 101,
+    "tool_calls_count": 1,
+    "tool_names": [
+      "memory_remember"
+    ],
+    "verification_status": "verified",
+    "response_preview": "Got it. I've remembered that your favorite programming language is Rust."
+  }
+]

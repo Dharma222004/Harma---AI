@@ -1,0 +1,119 @@
+[
+  {
+    "request_id": "harma-ff77c3",
+    "request": "Hello Harma",
+    "timings": {
+      "tool_discovery_ms": 0.2,
+      "llm_ms": 1440.4,
+      "total_ms": 1442.6
+    },
+    "llm_calls": 1,
+    "tool_calls": 0,
+    "tokens_in": 1170,
+    "tokens_out": 39,
+    "selected_tools": 0,
+    "total_tools": 101
+  },
+  {
+    "request_id": "harma-c2ddf3",
+    "request": "What time is it?",
+    "timings": {
+      "memory_retrieval_ms": 2.2,
+      "tool_discovery_ms": 0.2,
+      "llm_ms": 7330.4,
+      "tool_execution_ms": 0.8,
+      "total_ms": 7337.4
+    },
+    "llm_calls": 1,
+    "tool_calls": 1,
+    "tokens_in": 1642,
+    "tokens_out": 29,
+    "selected_tools": 2,
+    "total_tools": 101
+  },
+  {
+    "request_id": "harma-548b7d",
+    "request": "Open Chrome",
+    "timings": {
+      "memory_retrieval_ms": 1.1,
+      "tool_discovery_ms": 0.4,
+      "llm_ms": 2679.2,
+      "tool_execution_ms": 8798.4,
+      "total_ms": 47557.8
+    },
+    "llm_calls": 6,
+    "tool_calls": 6,
+    "tokens_in": 26302,
+    "tokens_out": 648,
+    "selected_tools": 21,
+    "total_tools": 101
+  },
+  {
+    "request_id": "harma-de49c3",
+    "request": "Open WhatsApp and check if Dharmadurai is visible",
+    "timings": {
+      "memory_retrieval_ms": 1.5,
+      "tool_discovery_ms": 0.3,
+      "llm_ms": 5584.9,
+      "tool_execution_ms": 3.0,
+      "total_ms": 58857.4
+    },
+    "llm_calls": 6,
+    "tool_calls": 6,
+    "tokens_in": 47262,
+    "tokens_out": 1351,
+    "selected_tools": 52,
+    "total_tools": 101
+  },
+  {
+    "request_id": "harma-7c6ebd",
+    "request": "Open Chrome and navigate to https://example.com",
+    "timings": {
+      "memory_retrieval_ms": 1.5,
+      "tool_discovery_ms": 0.4,
+      "llm_ms": 2172.9,
+      "tool_execution_ms": 3012.8,
+      "total_ms": 63799.2
+    },
+    "llm_calls": 6,
+    "tool_calls": 6,
+    "tokens_in": 49833,
+    "tokens_out": 1049,
+    "selected_tools": 52,
+    "total_tools": 101
+  },
+  {
+    "request_id": "harma-05ee94",
+    "request": "Show status of external integrations",
+    "timings": {
+      "memory_retrieval_ms": 1.7,
+      "tool_discovery_ms": 0.1,
+      "llm_ms": 2922.8,
+      "tool_execution_ms": 0.8,
+      "total_ms": 5247.6
+    },
+    "llm_calls": 2,
+    "tool_calls": 1,
+    "tokens_in": 27725,
+    "tokens_out": 96,
+    "selected_tools": 101,
+    "total_tools": 101
+  },
+  {
+    "request_id": "harma-35b162",
+    "request": "Remember that my favourite programming language is Rust",
+    "timings": {
+      "memory_retrieval_ms": 1.9,
+      "tool_discovery_ms": 0.3,
+      "llm_ms": 2304.7,
+      "tool_execution_ms": 1.8,
+      "total_ms": 50615.0
+    },
+    "llm_calls": 5,
+    "tool_calls": 4,
+    "tokens_in": 16142,
+    "tokens_out": 1273,
+    "selected_tools": 5,
+    "total_tools": 101
+  }
+]

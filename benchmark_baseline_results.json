@@ -1,0 +1,37 @@
+[
+  {
+    "benchmark": "Benchmark A: Direct Response",
+    "prompt": "Hello Harma",
+    "error": "'int' object is not iterable"
+  },
+  {
+    "benchmark": "Benchmark B: Deterministic Tool",
+    "prompt": "What time is it?",
+    "error": "'int' object is not iterable"
+  },
+  {
+    "benchmark": "Benchmark C: Single Computer Action",
+    "prompt": "Open Chrome",
+    "error": "'int' object is not iterable"
+  },
+  {
+    "benchmark": "Benchmark D: Multi-Step Computer",
+    "prompt": "Open WhatsApp and check if Dharmadurai is visible",
+    "error": "'int' object is not iterable"
+  },
+  {
+    "benchmark": "Benchmark E: Browser Task",
+    "prompt": "Open Chrome and navigate to https://example.com",
+    "error": "'int' object is not iterable"
+  },
+  {
+    "benchmark": "Benchmark F: MCP Task",
+    "prompt": "Show status of external integrations",
+    "error": "'int' object is not iterable"
+  },
+  {
+    "benchmark": "Benchmark G: Memory Task",
+    "prompt": "Remember that my favourite programming language is Rust",
+    "error": "'int' object is not iterable"
+  }
+]

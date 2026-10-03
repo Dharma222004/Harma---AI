@@ -1,0 +1,16 @@
+.env
+logs/
+data/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+scratch/
+scratch_*.png
+fnb_out.txt

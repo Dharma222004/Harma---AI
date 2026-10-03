@@ -1,0 +1,336 @@
+[
+  {
+    "category": "Simple (Time)",
+    "prompt": "What time is it?",
+    "response": "Friday, 02 October 2026  10:22 PM India Standard Time",
+    "status": "completed",
+    "total_time_s": 0.004,
+    "llm_calls": 0,
+    "budget_mode": "FAST",
+    "verification": "verified",
+    "tools_called": [
+      "get_current_time"
+    ],
+    "perf_summary": {
+      "request_id": "harma-252adf",
+      "durations_ms": {
+        "memory_retrieval_ms": null,
+        "tool_discovery_ms": 0.0,
+        "llm_ms": null,
+        "tool_execution_ms": 0.6,
+        "verification_ms": null,
+        "continuation_ms": null,
+        "total_ms": 3.7
+      },
+      "counts": {
+        "llm_calls": 0,
+        "tool_calls": 1,
+        "screenshots": 0,
+        "retries": 0,
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "selected_tools": 1,
+        "total_tools": 101
+      }
+    }
+  },
+  {
+    "category": "Open App (Notepad)",
+    "prompt": "Open Notepad.",
+    "response": "Done. I opened Notepad.",
+    "status": "completed",
+    "total_time_s": 10.401,
+    "llm_calls": 1,
+    "budget_mode": "FAST",
+    "verification": "action_executed_unverified",
+    "tools_called": [
+      "open_application"
+    ],
+    "perf_summary": {
+      "request_id": "harma-d8b787",
+      "durations_ms": {
+        "memory_retrieval_ms": 2.2,
+        "tool_discovery_ms": 0.4,
+        "llm_ms": 2057.3,
+        "tool_execution_ms": 8337.7,
+        "verification_ms": null,
+        "continuation_ms": null,
+        "total_ms": 10400.7
+      },
+      "counts": {
+        "llm_calls": 1,
+        "tool_calls": 1,
+        "screenshots": 0,
+        "retries": 0,
+        "tokens_in": 2645,
+        "tokens_out": 61,
+        "selected_tools": 8,
+        "total_tools": 101
+      }
+    }
+  },
+  {
+    "category": "Open App (Chrome)",
+    "prompt": "Open Chrome.",
+    "response": "Done. I opened Chrome.",
+    "status": "completed",
+    "total_time_s": 8.73,
+    "llm_calls": 1,
+    "budget_mode": "FAST",
+    "verification": "action_executed_unverified",
+    "tools_called": [
+      "open_application"
+    ],
+    "perf_summary": {
+      "request_id": "harma-6f1c59",
+      "durations_ms": {
+        "memory_retrieval_ms": 1.4,
+        "tool_discovery_ms": 0.3,
+        "llm_ms": 587.1,
+        "tool_execution_ms": 8122.4,
+        "verification_ms": null,
+        "continuation_ms": null,
+        "total_ms": 8729.3
+      },
+      "counts": {
+        "llm_calls": 1,
+        "tool_calls": 1,
+        "screenshots": 0,
+        "retries": 0,
+        "tokens_in": 2714,
+        "tokens_out": 55,
+        "selected_tools": 8,
+        "total_tools": 101
+      }
+    }
+  },
+  {
+    "category": "Computer Multi-action",
+    "prompt": "Open Notepad and type hello.",
+    "response": "I completed the step with type_text. Please let me know what you would like to do next.",
+    "status": "completed",
+    "total_time_s": 133.362,
+    "llm_calls": 10,
+    "budget_mode": "RECOVERY",
+    "verification": "action_executed_unverified",
+    "tools_called": [
+      "focus_application",
+      "open_application",
+      "focus_application",
+      "list_open_windows",
+      "get_active_window",
+      "hotkey",
+      "type_text",
+      "press_key",
+      "observe_screen",
+      "type_text"
+    ],
+    "perf_summary": {
+      "request_id": "harma-b8acd9",
+      "durations_ms": {
+        "memory_retrieval_ms": 1.6,
+        "tool_discovery_ms": 0.1,
+        "llm_ms": 1787.6,
+        "tool_execution_ms": 17281.8,
+        "verification_ms": null,
+        "continuation_ms": null,
+        "total_ms": 133361.7
+      },
+      "counts": {
+        "llm_calls": 10,
+        "tool_calls": 10,
+        "screenshots": 1,
+        "retries": 0,
+        "tokens_in": 135930,
+        "tokens_out": 1020,
+        "selected_tools": 101,
+        "total_tools": 101
+      }
+    }
+  },
+  {
+    "category": "Browser Search",
+    "prompt": "Search the web for NVIDIA AI.",
+    "response": "I completed the step with close_browser. Please let me know what you would like to do next.",
+    "status": "completed",
+    "total_time_s": 82.972,
+    "llm_calls": 10,
+    "budget_mode": "RECOVERY",
+    "verification": "verified",
+    "tools_called": [
+      "search_web",
+      "observe_page",
+      "close_browser",
+      "browser_status",
+      "search_web",
+      "observe_page",
+      "browser_click",
+      "observe_page",
+      "browser_click",
+      "close_browser"
+    ],
+    "perf_summary": {
+      "request_id": "harma-fd2a42",
+      "durations_ms": {
+        "memory_retrieval_ms": 2.0,
+        "tool_discovery_ms": 0.5,
+        "llm_ms": 4842.1,
+        "tool_execution_ms": 588.3,
+        "verification_ms": null,
+        "continuation_ms": null,
+        "total_ms": 82971.8
+      },
+      "counts": {
+        "llm_calls": 10,
+        "tool_calls": 10,
+        "screenshots": 0,
+        "retries": 0,
+        "tokens_in": 61501,
+        "tokens_out": 1826,
+        "selected_tools": 21,
+        "total_tools": 101
+      }
+    }
+  },
+  {
+    "category": "Memory Recall",
+    "prompt": "Recall my favorite programming language.",
+    "response": "Your favorite programming language is Rust.",
+    "status": "completed",
+    "total_time_s": 8.513,
+    "llm_calls": 2,
+    "budget_mode": "DEEP",
+    "verification": "verified",
+    "tools_called": [
+      "memory_search"
+    ],
+    "perf_summary": {
+      "request_id": "harma-e201e4",
+      "durations_ms": {
+        "memory_retrieval_ms": 2.9,
+        "tool_discovery_ms": 0.4,
+        "llm_ms": 1142.9,
+        "tool_execution_ms": 2.0,
+        "verification_ms": null,
+        "continuation_ms": null,
+        "total_ms": 8512.4
+      },
+      "counts": {
+        "llm_calls": 2,
+        "tool_calls": 1,
+        "screenshots": 0,
+        "retries": 0,
+        "tokens_in": 12260,
+        "tokens_out": 165,
+        "selected_tools": 11,
+        "total_tools": 101
+      }
+    }
+  },
+  {
+    "category": "Scheduled Task",
+    "prompt": "Create a task to review system logs tomorrow.",
+    "response": "Friday, 02 October 2026  10:26 PM India Standard Time",
+    "status": "completed",
+    "total_time_s": 2.709,
+    "llm_calls": 1,
+    "budget_mode": "DEEP",
+    "verification": "verified",
+    "tools_called": [
+      "get_current_time"
+    ],
+    "perf_summary": {
+      "request_id": "harma-4b58c9",
+      "durations_ms": {
+        "memory_retrieval_ms": 2.1,
+        "tool_discovery_ms": 0.4,
+        "llm_ms": 2703.0,
+        "tool_execution_ms": 0.8,
+        "verification_ms": null,
+        "continuation_ms": null,
+        "total_ms": 2708.1
+      },
+      "counts": {
+        "llm_calls": 1,
+        "tool_calls": 1,
+        "screenshots": 0,
+        "retries": 0,
+        "tokens_in": 6043,
+        "tokens_out": 131,
+        "selected_tools": 11,
+        "total_tools": 101
+      }
+    }
+  },
+  {
+    "category": "MCP / Integration",
+    "prompt": "Check integration status for github.",
+    "response": "Execution stopped: loop detected while attempting action integrations.status.",
+    "status": "failed",
+    "total_time_s": 5.001,
+    "llm_calls": 3,
+    "budget_mode": "RECOVERY",
+    "verification": "failed",
+    "tools_called": [
+      "integrations.status",
+      "integrations.status"
+    ],
+    "perf_summary": {
+      "request_id": "harma-29a1db",
+      "durations_ms": {
+        "memory_retrieval_ms": 2.0,
+        "tool_discovery_ms": 0.3,
+        "llm_ms": 806.4,
+        "tool_execution_ms": -806.7,
+        "verification_ms": null,
+        "continuation_ms": null,
+        "total_ms": 5000.9
+      },
+      "counts": {
+        "llm_calls": 3,
+        "tool_calls": 3,
+        "screenshots": 0,
+        "retries": 0,
+        "tokens_in": 16010,
+        "tokens_out": 194,
+        "selected_tools": 8,
+        "total_tools": 101
+      }
+    }
+  },
+  {
+    "category": "Android Device",
+    "prompt": "List android devices connected to adb.",
+    "response": "One Android device is connected via ADB:\n\n- **Device:** Google Pixel 7  \n- **Android Version:** 14  \n- **Screen:** 1080\u00d7...",
+    "status": "completed",
+    "total_time_s": 6.739,
+    "llm_calls": 2,
+    "budget_mode": "DEEP",
+    "verification": "verified",
+    "tools_called": [
+      "android.device_status"
+    ],
+    "perf_summary": {
+      "request_id": "harma-98b153",
+      "durations_ms": {
+        "memory_retrieval_ms": 1.9,
+        "tool_discovery_ms": 0.3,
+        "llm_ms": 3289.9,
+        "tool_execution_ms": 1.3,
+        "verification_ms": null,
+        "continuation_ms": null,
+        "total_ms": 6739.0
+      },
+      "counts": {
+        "llm_calls": 2,
+        "tool_calls": 1,
+        "screenshots": 0,
+        "retries": 0,
+        "tokens_in": 13283,
+        "tokens_out": 619,
+        "selected_tools": 22,
+        "total_tools": 101
+      }
+    }
+  }
+]

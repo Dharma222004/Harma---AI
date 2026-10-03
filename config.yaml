@@ -1,0 +1,287 @@
+# Harma Configuration
+# ──────────────────────────────────────────────────────────────────────────────
+# Edit this file to change Harma's behaviour.
+# Secrets (API keys) go in the .env file — NOT here.
+# ──────────────────────────────────────────────────────────────────────────────
+
+llm:
+  # Provider: gemini | groq | openai | claude
+  provider: gemini
+
+  # Model name
+  # Gemini:  gemini-2.5-flash | gemini-2.5-pro | gemini-1.5-flash
+  # Groq:    openai/gpt-oss-120b | llama-3.3-70b-versatile | mixtral-8x7b-32768
+  # OpenAI:  gpt-4o | gpt-4o-mini
+  # Claude:  claude-3-5-sonnet-20241022
+  model: gemini-2.5-flash
+  groq_model: openai/gpt-oss-20b
+
+  # For OpenAI-compatible endpoints (Groq, Together, Ollama, LM Studio, etc.)
+  # Leave empty to use the official endpoint for the selected provider.
+  base_url:
+
+  temperature: 0.2
+  max_tokens: 8192
+  timeout: 60
+  stream: true
+
+agent:
+  name: Harma
+  max_iterations: 100    # max tool-call iterations per task
+  max_retries: 3        # retries on transient errors
+  task_timeout_seconds: 600.0  # max execution deadline in seconds (10 mins)
+  verbose_logging: true
+
+performance:
+  mode: balanced
+  max_llm_calls: 100    # max LLM reasoning cycles per request
+
+permissions:
+  # Safe actions (read-only, low-risk) auto-execute without asking
+  auto_confirm_safe: true
+
+  # Sensitive actions (send message, modify files) ask the user by default
+  # Set to true to auto-approve (use with caution)
+  auto_confirm_sensitive: false
+
+  # HIGH RISK actions ALWAYS require confirmation — this cannot be changed
+
+memory:
+  short_term_max_messages: 50
+  enable_long_term: true
+  long_term_db_path: data/harma_memory.db
+
+  storage:
+    provider: sqlite
+    path: data/harma_memory.db
+
+  retrieval:
+    enabled: true
+    top_k: 8
+    max_context_tokens: 1500
+    min_score: 0.05
+
+  extraction:
+    enabled: true
+    auto_save: true
+
+  privacy:
+    secret_detection: true
+
+  retention:
+    enabled: true
+
+computer:
+  enabled: true
+
+  screenshot:
+    enabled: true
+
+  mouse:
+    enabled: true
+    # Move mouse to top-left corner to abort any action (pyautogui FAILSAFE)
+    failsafe: true
+
+  keyboard:
+    enabled: true
+    # Delay between keystrokes in seconds
+    type_interval: 0.03
+
+  window_control:
+    enabled: true
+    # Seconds to wait for a window to appear after opening an app
+    focus_timeout: 3.0
+
+  ui_detection:
+    enabled: true
+    # Preferred strategy: accessibility | image_match | window_title
+    strategy: accessibility
+    confidence: 0.8
+
+  safety:
+    # Minimum delay between consecutive OS-level actions (seconds)
+    action_interval: 0.05
+    # Post-action settle delay (seconds)
+    post_action_delay: 0.5
+
+# ── Phase 3: Browser Automation ───────────────────────────────────────────────
+browser:
+  enabled: true
+
+  # Automation engine (currently only playwright is supported)
+  engine: playwright
+
+  # Browser to use: chromium | firefox | webkit
+  browser: chromium
+
+  # Set to true to run without a visible window (faster, less RAM)
+  headless: false
+
+  # Persist browser profile across sessions (keeps you logged in)
+  persistent_profile: true
+  # profile_dir: C:\Users\yourname\harma_profile
+
+  # Default search engine for search_web tool
+  search_engine: https://www.google.com
+
+  # Milliseconds of delay between browser actions (0 = maximum speed)
+  slow_mo_ms: 50
+
+  downloads:
+    enabled: true
+    # dir: C:\Users\yourname\Downloads\harma   # leave blank for default
+
+  uploads:
+    enabled: true
+
+  navigation:
+    # Maximum number of page navigations per task
+    max_pages_per_task: 100
+
+  safety:
+    # Require confirmation before consequential actions (form submit, etc.)
+    require_confirmation_for_sensitive_actions: true
+
+
+# ── Phase 4: Voice System ────────────────────────────────────────────────────
+
+voice:
+  enabled: true
+
+  wake_word:
+    # Set enabled: true to use "Hey Harma" activation.
+    # Set enabled: false for push-to-talk (press ENTER at CLI).
+    enabled: true
+    phrase: "hey harma"
+
+  microphone:
+    # Use "default" for the system default microphone.
+    # Or specify a partial device name: "Realtek" / "USB"
+    device: default
+    sample_rate: 16000
+    channels: 1
+
+  vad:
+    enabled: true
+    silence_timeout_ms: 1200    # stop recording after 1.2s of silence
+    minimum_speech_ms: 250      # need at least 250ms of speech to record
+
+  stt:
+    # Provider: google (free, online) | whisper (accurate, OpenAI) | offline (CMU Sphinx)
+    provider: google
+    language: en-IN             # BCP-47 language tag
+    timeout: 15.0               # seconds before STT is abandoned
+
+  tts:
+    # Provider: edge_tts (Microsoft Edge neural voices, lifelike) | pyttsx3 (offline) | silent
+    provider: edge_tts
+    rate: 175                   # words per minute (100-250 typical)
+    volume: 0.95                # 0.0 to 1.0
+    voice_id: "en-IN-NeerjaNeural"
+
+  conversation_mode:
+    enabled: false              # true = auto-listen after each response
+    inactivity_timeout_seconds: 30.0
+    max_duration_seconds: 600.0
+
+  # How long to wait for speech after wake word / push-to-talk
+  listen_timeout_seconds: 15.0
+
+  privacy:
+    # NEVER save audio to disk by default.
+    save_recordings: false
+    # If save_recordings is true, audio will be saved here:
+    # recordings_dir: logs/recordings
+
+android:
+  enabled: true
+
+  transport:
+    provider: adb             # adb | mock
+    device: default           # "default" or specific device ID
+    adb_path: adb             # path to adb binary
+
+  observation:
+    screenshots: true
+    ui_hierarchy: true
+
+  interaction:
+    action_timeout_ms: 15000
+    retry_count: 1
+
+  privacy:
+    save_screenshots: false
+    persist_screen_text: false
+    detect_secrets: true
+
+tasks:
+  enabled: true
+  timezone: UTC
+
+  execution:
+    max_concurrent_tasks: 3
+    max_runtime_seconds: 300
+    max_steps: 50
+
+  conditions:
+    minimum_poll_interval_seconds: 60
+
+  quiet_hours:
+    enabled: false
+    start: "22:00"
+    end: "07:00"
+
+  dry_run: false
+
+integrations:
+  enabled: true
+  dry_run: false
+
+  circuit_breaker:
+    failure_threshold: 3
+    cooldown_seconds: 30.0
+
+  mcp:
+    enabled: true
+    default_timeout_seconds: 30.0
+    auto_connect_on_startup: true
+    servers: {}
+
+intelligence:
+  planning:
+    enabled: true
+    max_steps: 20
+    max_retries: 3
+
+  context:
+    max_tokens: 8000
+    memory_limit: 5
+    observation_limit: 10
+
+  multimodal:
+    enabled: true
+
+  vision:
+    provider: mock
+
+  model_router:
+    enabled: true
+
+  verification:
+    required_for_side_effects: true
+
+  dry_run: false
+
+ui:
+  enabled: true
+  host: "127.0.0.1"
+  port: 8000
+  cors_origins: ["*"]
+  dev_mode: false
+
+security:
+  session_timeout_minutes: 60
+  require_authentication: false
+
+
+

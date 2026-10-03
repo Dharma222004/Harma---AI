@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Harma Android Assistant Manifest (Spec §39, §40, §41, §42)
+    Declarations for VoiceInteractionService, VoiceInteractionSessionService,
+    foreground service permissions, and Android 14+ background execution restrictions.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="ai.harma.assistant">
+
+    <!-- Audio & Voice Interaction Permissions (Spec §41) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!-- Android 14+ Foreground Service Declarations (Spec §40) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+    <!-- Device Control & Capability Permissions (Spec §15, §16, §18, §19, §20) -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <application
+        android:label="Harma Assistant"
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.HarmaAssistant">
+
+        <!--
+            Platform Assistant Service (Spec §39)
+            Kept running by the Android system when selected as the default Assistant app.
+        -->
+        <service
+            android:name=".HarmaVoiceInteractionService"
+            android:label="Harma Voice Assistant"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:exported="true">
+            <meta-data
+                android:name="android.voice_interaction"
+                android:resource="@xml/voice_interaction_service" />
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+        </service>
+
+        <!--
+            Voice Interaction Session Service (Spec §39, §42)
+            Handles UI overlay, active voice transcription, and agent responses.
+        -->
+        <service
+            android:name=".HarmaVoiceSessionService"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:exported="true" />
+
+        <!--
+            Microphone Foreground Service for Hotwording / Audio (Spec §40)
+            Respects Android 14+ background execution rules with microphone type.
+        -->
+        <service
+            android:name=".HarmaAudioCaptureService"
+            android:foregroundServiceType="microphone"
+            android:exported="false" />
+
+    </application>
+</manifest>
