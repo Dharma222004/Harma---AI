@@ -14,7 +14,8 @@ import com.personal.harmaai.data.TaskEntity
 import com.personal.harmaai.network.AgentConversation
 import com.personal.harmaai.network.AgentLlmClient
 import com.personal.harmaai.network.AgentMessage
-import com.personal.harmaai.network.NvidiaAgentClient
+import com.personal.harmaai.network.NetworkMonitor
+import com.personal.harmaai.network.ProviderRoutingLlmClient
 import com.personal.harmaai.perf.HarmaPerf
 import com.personal.harmaai.permissions.PermissionNavigator
 import com.personal.harmaai.tools.ToolResult
@@ -28,7 +29,7 @@ class AgentOrchestrator(
     context: Context,
     private val settings: SettingsStore,
     private val database: HarmaDatabase,
-    private val client: AgentLlmClient = NvidiaAgentClient(),
+    private val client: AgentLlmClient = ProviderRoutingLlmClient(),
     private val executor: AgentToolExecutor = AgentToolExecutor(context, settings),
 ) {
     private val appContext = context.applicationContext
@@ -78,11 +79,29 @@ class AgentOrchestrator(
                 }
             }
 
-            // Step 2 Fast Path: Try local command router next (for confirmation or direct tools)
+            // Step 2 Fast Path (Tier 1): Try local command router next (offline-first intents & direct APIs)
             val routeResult = localRouter.tryRoute(effectiveCommand, sId)
             when (routeResult) {
                 is RouterResult.Handled -> {
                     val res = routeResult.result
+                    AgentRuntime.setRunningStep(
+                        number = 1,
+                        title = routeResult.description,
+                        detail = effectiveCommand,
+                    )
+                    AgentRuntime.completeLastStep(res.success, res.message)
+                    database.stepDao().insert(
+                        StepEntity(
+                            taskId = taskId,
+                            stepNumber = 1,
+                            category = "fast_path",
+                            toolName = routeResult.description,
+                            argumentsJson = JSONObject().put("command", persistedCommand).toString(),
+                            result = res.message,
+                            success = res.success,
+                            screenshotPath = null,
+                        ),
+                    )
                     if (res.success) {
                         finishSuccess(taskId, res.message)
                     } else {
@@ -108,13 +127,73 @@ class AgentOrchestrator(
                     return
                 }
                 is RouterResult.NotHandled -> {
-                    // Proceed to LLM loop
+                    // Proceed to Learned UI Macro Cache, Offline Queue, or Online LLM Loop
                 }
             }
 
+            // Step 2.5 (Self-Learning UI Macro Cache): Replay verified ElementFingerprint trajectories
+            // on-device in <1s (works even offline!). Falls back to LLM if layout changed.
+            if (AgentAccessibilityService.isConnected()) {
+                when (
+                    val macroResult = LearnedMacroManager.tryReplayMacro(
+                        database = database,
+                        executor = executor,
+                        safetyGate = safety,
+                        command = effectiveCommand,
+                        taskId = taskId,
+                    )
+                ) {
+                    is MacroReplayResult.Replayed -> {
+                        finishSuccess(taskId, macroResult.summary)
+                        HarmaPerf.onTaskFinished(sId, "Learned macro replayed in ${macroResult.elapsedMs}ms")
+                        return
+                    }
+                    is MacroReplayResult.LayoutChanged -> {
+                        AgentRuntime.addSystemMessage(
+                            "Cached UI macro did not match current layout (${macroResult.reason}); re-planning with LLM...",
+                        )
+                    }
+                    is MacroReplayResult.NotFound -> {
+                        // No cached macro yet; proceed to Offline Queue or LLM Loop
+                    }
+                }
+            }
+
+            // Step 3 (Offline Task Queue): If device is offline and Tier 2 reasoning/online app is needed,
+            // save to persistent Room queue and automatically resume when internet returns.
+            if (!NetworkMonitor.isCurrentlyOnline(appContext)) {
+                val queuedId = OfflineTaskQueueManager.enqueueOfflineTask(
+                    context = appContext,
+                    database = database,
+                    command = effectiveCommand,
+                )
+                val queueMsg = "You're offline. Saved '$persistedCommand' to the offline task queue — Harma AI will run it automatically when internet returns."
+                AgentRuntime.setRunningStep(
+                    number = 1,
+                    title = "Queued for when online",
+                    detail = persistedCommand,
+                )
+                AgentRuntime.completeLastStep(true, queueMsg)
+                database.stepDao().insert(
+                    StepEntity(
+                        taskId = taskId,
+                        stepNumber = 1,
+                        category = "offline_queue",
+                        toolName = "enqueue_offline_task",
+                        argumentsJson = JSONObject().put("queuedId", queuedId).put("command", persistedCommand).toString(),
+                        result = queueMsg,
+                        success = true,
+                        screenshotPath = null,
+                    ),
+                )
+                finishSuccess(taskId, queueMsg)
+                HarmaPerf.onTaskFinished(sId, "Queued offline ($queuedId)")
+                return
+            }
+
             if (settings.apiKey.isBlank()) {
-                finishFailure(taskId, "Add an NVIDIA API key in Harma AI Settings first.")
-                HarmaPerf.onTaskFinished(sId, "Missing NVIDIA API key")
+                finishFailure(taskId, "Add a Gemini or NVIDIA API key in Harma AI Settings first.")
+                HarmaPerf.onTaskFinished(sId, "Missing API key")
                 return
             }
 
@@ -141,6 +220,7 @@ class AgentOrchestrator(
                 ),
             )
             val successfulConsequentialActions = mutableSetOf<String>()
+            val recordedMacroSteps = mutableListOf<LearnedMacroStep>()
             var lastFailedFingerprint = ""
             var repeatedFailureCount = 0
             var lastActionScreenSignature = ""
@@ -229,6 +309,7 @@ class AgentOrchestrator(
                     detail = safeArguments(call),
                 )
 
+                val candidateMacroStep = LearnedMacroManager.captureStepBeforeExecution(call, observation)
                 val fingerprint = call.fingerprint()
                 val toolStart = SystemClock.uptimeMillis()
                 val rawResult = if (
@@ -262,6 +343,11 @@ class AgentOrchestrator(
 
                 observation = observe(sId)
                 val result = verifyObservedResult(call, rawResult, observation)
+                if (result.success && candidateMacroStep != null) {
+                    recordedMacroSteps += candidateMacroStep.copy(
+                        expectedPackage = observation?.packageName.orEmpty(),
+                    )
+                }
                 if (!result.success && fingerprint == lastFailedFingerprint) {
                     repeatedFailureCount += 1
                 } else if (!result.success) {
@@ -308,6 +394,12 @@ class AgentOrchestrator(
                             )
                             continue
                         }
+                        LearnedMacroManager.saveLearnedMacro(
+                            database = database,
+                            rawCommand = effectiveCommand,
+                            steps = recordedMacroSteps,
+                            finalSummary = result.message,
+                        )
                         finishSuccess(taskId, result.message)
                     } else {
                         finishFailure(taskId, result.message)
@@ -417,7 +509,29 @@ class AgentOrchestrator(
 
         val assistantCalls = history.filterIsInstance<AgentMessage.Assistant>().flatMap { it.toolCalls }
         val executedNames = assistantCalls.map { it.name }
-        val interactionTools = setOf("tap", "tap_xy", "type_text", "take_photo", "make_call", "send_sms", "scroll")
+        val interactionTools = setOf(
+            "tap",
+            "tap_xy",
+            "click_text",
+            "click_id",
+            "click_desc",
+            "type_text",
+            "take_photo",
+            "make_call",
+            "call_number",
+            "call_contact",
+            "send_sms",
+            "scroll",
+            "scroll_to_find",
+            "swipe",
+            "press",
+            "press_key",
+            "media_control",
+            "set_alarm",
+            "set_timer",
+            "search_web",
+            "open_url",
+        )
         val hasInteracted = executedNames.any { it in interactionTools }
         return !hasInteracted && executedNames.contains("open_app")
     }
@@ -518,7 +632,11 @@ class AgentOrchestrator(
         "open_app" -> "Opening app"
         "tap" -> "Tapping screen element"
         "tap_xy" -> "Tapping screen"
+        "click_text" -> "Clicking text"
+        "click_id" -> "Clicking element by ID"
+        "click_desc" -> "Clicking element by description"
         "type_text" -> "Entering text"
+        "scroll_to_find" -> "Scrolling to find text"
         "finish" -> "Verifying completion"
         else -> name.replace('_', ' ').replaceFirstChar { it.uppercase() }
     }
@@ -535,10 +653,19 @@ class AgentOrchestrator(
             "get_screen",
             "tap",
             "tap_xy",
+            "click_text",
+            "click_id",
+            "click_desc",
             "long_press",
             "type_text",
             "scroll",
+            "scroll_to_find",
+            "swipe",
+            "press",
+            "press_key",
+            "wait_for",
             "take_screenshot",
+            "screenshot",
         )
         private val CONSEQUENTIAL_TOOLS = setOf("make_call", "send_sms", "set_alarm", "set_timer")
         private val SECRET_PATTERN = Regex("(?i)password|otp|one.?time|pin|card|cvv|secret|token")

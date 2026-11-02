@@ -53,12 +53,13 @@ class SpeechRecognizerController(
                 }
             }
 
+            val preferOffline = !com.personal.harmaai.network.NetworkMonitor.isCurrentlyOnline(appContext)
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
+                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, preferOffline)
             }
 
             runCatching { recognizer?.startListening(intent) }

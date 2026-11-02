@@ -1,8 +1,8 @@
 package com.personal.harmaai.network
 
+import com.personal.harmaai.accessibility.ScreenObservation
 import com.personal.harmaai.agent.AgentSystemPrompt
 import com.personal.harmaai.agent.AgentToolCall
-import com.personal.harmaai.accessibility.ScreenObservation
 import com.personal.harmaai.tools.ToolResult
 import com.personal.harmaai.tools.ToolSpec
 import kotlinx.coroutines.delay
@@ -17,6 +17,7 @@ import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -34,15 +35,70 @@ private class GeminiApiException(
     message: String,
 ) : IOException(message)
 
+/**
+ * Dual-provider LLM router that transparently routes to `GeminiAgentClient` when a Google Gemini
+ * API key (`AIza...`) or `gemini-*` model is active, and to `NvidiaAgentClient` for NVIDIA NIM keys.
+ */
+class ProviderRoutingLlmClient(
+    private val geminiClient: GeminiAgentClient = GeminiAgentClient(),
+    private val nvidiaClient: NvidiaAgentClient = NvidiaAgentClient(),
+) : AgentLlmClient {
+    override suspend fun decide(
+        apiKey: String,
+        models: List<String>,
+        history: List<AgentMessage>,
+        tools: List<ToolSpec>,
+        sessionId: String,
+    ): AgentDecision {
+        val trimmedKey = apiKey.trim()
+        val isGeminiKey = trimmedKey.startsWith("AIza") ||
+            models.firstOrNull()?.startsWith("gemini-", ignoreCase = true) == true
+        return if (isGeminiKey && !trimmedKey.startsWith("nvapi-")) {
+            val geminiModels = models.filter { it.startsWith("gemini-", ignoreCase = true) }
+                .ifEmpty { listOf("gemini-2.5-flash", "gemini-2.0-flash") }
+            geminiClient.decide(trimmedKey, geminiModels, history, tools, sessionId)
+        } else {
+            nvidiaClient.decide(trimmedKey, models, history, tools, sessionId)
+        }
+    }
+}
+
 class GeminiAgentClient(
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(90, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .build(),
-) {
+) : AgentLlmClient {
     @Volatile
     private var preferredWorkingModel: String? = null
+
+    override suspend fun decide(
+        apiKey: String,
+        models: List<String>,
+        history: List<AgentMessage>,
+        tools: List<ToolSpec>,
+        sessionId: String,
+    ): AgentDecision {
+        val geminiHistory = toGeminiContents(history)
+        val raw = decide(apiKey, models, geminiHistory, tools)
+        val callId = "gemini_call_${UUID.randomUUID().toString().take(8)}"
+        val llmToolCall = raw.toolCall?.let {
+            AgentLlmToolCall(id = callId, name = it.name, arguments = it.arguments)
+        }
+        val assistantMsg = AgentMessage.Assistant(
+            text = raw.text,
+            toolCalls = listOfNotNull(llmToolCall),
+        )
+        return AgentDecision(
+            text = raw.text,
+            toolCall = llmToolCall,
+            assistantMessage = assistantMsg,
+            modelUsed = raw.modelUsed,
+            finishReason = if (llmToolCall != null) "tool_calls" else "stop",
+            fallbackFrom = raw.fallbackFrom,
+        )
+    }
 
     suspend fun decide(
         apiKey: String,
@@ -83,6 +139,50 @@ class GeminiAgentClient(
         }
         throw lastError ?: IOException("No valid Gemini model was available.")
     }
+
+    private fun toGeminiContents(history: List<AgentMessage>): List<JSONObject> =
+        history.map { msg ->
+            when (msg) {
+                is AgentMessage.User -> {
+                    val parts = JSONArray().put(JSONObject().put("text", msg.text))
+                    addScreenshotPart(parts, msg.jpegBase64)
+                    JSONObject().put("role", "user").put("parts", parts)
+                }
+                is AgentMessage.Assistant -> {
+                    val parts = JSONArray()
+                    if (msg.text.isNotBlank()) {
+                        parts.put(JSONObject().put("text", msg.text))
+                    }
+                    msg.toolCalls.forEach { call ->
+                        parts.put(
+                            JSONObject().put(
+                                "functionCall",
+                                JSONObject()
+                                    .put("name", call.name)
+                                    .put("args", call.arguments),
+                            ),
+                        )
+                    }
+                    if (parts.length() == 0) {
+                        parts.put(JSONObject().put("text", "Thinking..."))
+                    }
+                    JSONObject().put("role", "model").put("parts", parts)
+                }
+                is AgentMessage.Tool -> {
+                    val responseObj = runCatching { JSONObject(msg.content) }
+                        .getOrElse { JSONObject().put("result", msg.content) }
+                    val parts = JSONArray().put(
+                        JSONObject().put(
+                            "functionResponse",
+                            JSONObject()
+                                .put("name", msg.toolName)
+                                .put("response", responseObj),
+                        ),
+                    )
+                    JSONObject().put("role", "user").put("parts", parts)
+                }
+            }
+        }
 
     fun initialContent(
         task: String,
@@ -143,7 +243,7 @@ class GeminiAgentClient(
                     JSONObject()
                         .put("name", spec.name)
                         .put("description", spec.description)
-                        .put("parameters", spec.parameters),
+                        .put("parameters", sanitizeGeminiSchema(spec.parameters)),
                 )
             }
         }
@@ -232,6 +332,12 @@ class GeminiAgentClient(
                 modelUsed = model,
             )
         }
+    }
+
+    private fun sanitizeGeminiSchema(schema: JSONObject): JSONObject {
+        val copy = JSONObject(schema.toString())
+        copy.remove("additionalProperties")
+        return copy
     }
 
     private fun addScreenshotPart(parts: JSONArray, screenshotBase64: String) {

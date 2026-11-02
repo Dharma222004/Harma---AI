@@ -14,7 +14,6 @@ import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
 import android.os.IBinder
-import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -26,6 +25,7 @@ import com.personal.harmaai.MainActivity
 import com.personal.harmaai.R
 import com.personal.harmaai.agent.AgentRuntime
 import com.personal.harmaai.agent.AgentStatus
+import com.personal.harmaai.network.NetworkMonitor
 import com.personal.harmaai.network.NvidiaAgentClient
 import com.personal.harmaai.perf.HarmaPerf
 import com.personal.harmaai.service.HarmaAgentService
@@ -37,14 +37,13 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 
 class HarmaVoiceService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var wakeWordListener: WakeWordListener? = null
-    private var vadDetector: VoiceActivityDetector? = null
     private val groqClient = GroqWhisperClient()
+    private var offlineSttEngine: OfflineSttEngine? = null
 
     private var audioManager: AudioManager? = null
     private var audioFocusRequest: AudioFocusRequest? = null
@@ -61,7 +60,7 @@ class HarmaVoiceService : Service() {
         super.onCreate()
         createNotificationChannel()
         audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-        vadDetector = VoiceActivityDetector(this)
+        offlineSttEngine = OfflineSttEngine(this, groqClient)
 
         try {
             toneGenerator = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90)
@@ -84,7 +83,7 @@ class HarmaVoiceService : Service() {
             ACTION_RESUME -> {
                 isUserPaused.set(false)
                 wakeWordListener?.resume()
-                updateNotification("Always listening for 'Hey Harma' (on-device)")
+                updateNotification("Always listening for 'Hey Harma' (offline-ready)")
             }
             else -> startForegroundVoiceService()
         }
@@ -92,7 +91,7 @@ class HarmaVoiceService : Service() {
     }
 
     private fun startForegroundVoiceService() {
-        val notification = buildNotification("Always listening for 'Hey Harma' (on-device)")
+        val notification = buildNotification("Always listening for 'Hey Harma' (offline-ready)")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIFICATION_ID,
@@ -109,16 +108,16 @@ class HarmaVoiceService : Service() {
     }
 
     private fun initWakeWordListener() {
-        val app = application as HarmaAiApplication
         wakeWordListener = WakeWordListener(
             context = this,
             onWakeWordDetected = { modelName ->
                 Log.i(TAG, "Wake word detected via $modelName. Triggering speech capture.")
                 HarmaPerf.onWakeWordDetected(modelName)
-                // Pre-warm connections to Groq and NVIDIA
                 val app = application as HarmaAiApplication
-                groqClient.preWarm(app.settings.groqApiKey)
-                NvidiaAgentClient.preWarm(app.settings.apiKey)
+                if (NetworkMonitor.isCurrentlyOnline(this)) {
+                    groqClient.preWarm(app.settings.groqApiKey)
+                    NvidiaAgentClient.preWarm(app.settings.apiKey)
+                }
                 onWakeWordFired()
             },
             onScoreUpdate = { score, threshold ->
@@ -129,33 +128,16 @@ class HarmaVoiceService : Service() {
 
     private fun onWakeWordFired() {
         if (isCapturingSpeech.get()) return
-
-        // 1. Audio and haptic feedback
+        // 1. Audio and haptic feedback (Stay over current foreground app so Harma can control it!)
         playBeepAndVibrate()
-
-        // 2. Bring Harma AI to front so user sees the listening assistant
-        bringAppToFront()
-
-        // 3. Start speech recording
+        // 2. Start offline-first speech capture
         startSpeechCapture()
     }
 
     private fun startSpeechCaptureDirectly() {
         if (isCapturingSpeech.get()) return
         playBeepAndVibrate()
-        bringAppToFront()
         startSpeechCapture()
-    }
-
-    private fun bringAppToFront() {
-        try {
-            val appIntent = Intent(this, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            }
-            startActivity(appIntent)
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not bring MainActivity to front: ${e.message}")
-        }
     }
 
     private fun startSpeechCapture() {
@@ -165,51 +147,30 @@ class HarmaVoiceService : Service() {
             isCapturingSpeech.set(true)
             wakeWordListener?.pause()
 
-            AgentRuntime.setVoiceListening(true, "Listening...")
-            updateNotification("Listening to your request...")
+            val online = NetworkMonitor.isCurrentlyOnline(this@HarmaVoiceService)
+            val modeLabel = if (online) "Listening..." else "Listening (Offline)..."
+            AgentRuntime.setVoiceListening(true, modeLabel)
+            updateNotification(modeLabel)
             HarmaPerf.onSpeechRecordStart(sessionId)
 
-            val detector = vadDetector ?: VoiceActivityDetector(this@HarmaVoiceService)
-            val audioFile = detector.recordSpeechWithVad(
+            val app = application as HarmaAiApplication
+            val stt = offlineSttEngine ?: OfflineSttEngine(this@HarmaVoiceService, groqClient)
+            val result = stt.listenAndTranscribe(
+                languageTag = app.settings.whisperLanguage.ifBlank { "en-US" },
+                groqApiKey = app.settings.groqApiKey,
+                groqModel = app.settings.groqWhisperModel,
                 sessionId = sessionId,
-                onSpeechStarted = {
-                    AgentRuntime.setVoiceListening(true, "Listening...")
+                onPartial = { partial ->
+                    AgentRuntime.setVoiceListening(true, "\"$partial\"")
                 },
             )
 
             HarmaPerf.onSpeechRecordStop(sessionId)
             AgentRuntime.setVoiceListening(false)
 
-            if (audioFile == null || audioFile.length() == 0L) {
-                Log.w(TAG, "No audio recorded by VAD.")
-                resumeWakeWordIfAppropriate()
-                return@launch
-            }
-
-            updateNotification("Working...")
-            AgentRuntime.setVoiceListening(true, "Working...")
-
-            val app = application as HarmaAiApplication
-            val apiKey = app.settings.groqApiKey
-            val model = app.settings.groqWhisperModel
-            val language = app.settings.whisperLanguage.ifBlank { "en" }
-
-            val result = groqClient.transcribe(
-                audioFile = audioFile,
-                apiKey = apiKey,
-                model = model,
-                language = language,
-                sessionId = sessionId,
-            )
-
-            // Clean up temp audio file
-            runCatching { audioFile.delete() }
-
-            AgentRuntime.setVoiceListening(false)
-
-            result.onSuccess { transcript ->
-                val clean = transcript.trim()
-                Log.i(TAG, "Transcript received: \"$clean\"")
+            result.onSuccess { rawTranscript ->
+                val clean = stripWakePrefix(rawTranscript.trim())
+                Log.i(TAG, "Transcript received: \"$clean\" (raw: \"$rawTranscript\")")
 
                 if (clean.isBlank()) {
                     AgentRuntime.addSystemMessage("Didn't catch that. Say 'Hey Harma' to try again.")
@@ -218,16 +179,23 @@ class HarmaVoiceService : Service() {
                     HarmaAgentService.stopTask(this@HarmaVoiceService)
                     AgentRuntime.addSystemMessage("Task stopped by voice command.")
                 } else {
+                    playResultConfirmBeep()
                     AgentRuntime.addVoiceUserMessage(clean)
                     HarmaAgentService.startTask(this@HarmaVoiceService, clean, sessionId)
                 }
             }.onFailure { error ->
-                Log.e(TAG, "Groq transcription failed: ${error.message}")
-                AgentRuntime.addSystemMessage("Voice recognition error: ${error.message ?: "Could not transcribe audio"}")
+                Log.e(TAG, "Speech transcription failed: ${error.message}")
+                AgentRuntime.addSystemMessage("Voice recognition: ${error.message ?: "Could not transcribe audio"}")
             }
 
             resumeWakeWordIfAppropriate()
         }
+    }
+
+    private fun stripWakePrefix(text: String): String {
+        return text
+            .replace(Regex("^(?i)(hey\\s+harma|hi\\s+harma|ok\\s+harma|hey\\s+jarvis)[,\\s]*"), "")
+            .trim()
     }
 
     private fun isVoiceStopCommand(text: String): Boolean {
@@ -248,7 +216,6 @@ class HarmaVoiceService : Service() {
         }
 
         serviceScope.launch {
-            // Wait 1.5s after agent finishes or TTS to avoid hearing itself
             while (AgentRuntime.state.value.status == AgentStatus.RUNNING || isTtsSpeaking) {
                 delay(800L)
             }
@@ -262,7 +229,7 @@ class HarmaVoiceService : Service() {
             if (!isUserPaused.get() && !isPausedByCallOrFocus.get() && !isCapturingSpeech.get()) {
                 wakeWordListener?.threshold = app.settings.wakeWordThreshold
                 wakeWordListener?.resume()
-                updateNotification("Always listening for 'Hey Harma' (on-device)")
+                updateNotification("Always listening for 'Hey Harma' (offline-ready)")
             }
         }
     }
@@ -271,7 +238,6 @@ class HarmaVoiceService : Service() {
         agentObserverJob = serviceScope.launch {
             AgentRuntime.state.collectLatest { state ->
                 if (state.status == AgentStatus.RUNNING) {
-                    // Temporarily pause wake word while agent is performing screen actions
                     wakeWordListener?.pause()
                 } else if (state.status == AgentStatus.COMPLETED || state.status == AgentStatus.STOPPED || state.status == AgentStatus.FAILED) {
                     resumeWakeWordIfAppropriate()
@@ -301,12 +267,19 @@ class HarmaVoiceService : Service() {
         } catch (_: Exception) {}
     }
 
+    private fun playResultConfirmBeep() {
+        try {
+            toneGenerator?.startTone(ToneGenerator.TONE_PROP_ACK, 90)
+        } catch (_: Exception) {}
+    }
+
     private fun setupAudioFocus() {
         val am = audioManager ?: return
         val focusListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
             when (focusChange) {
                 AudioManager.AUDIOFOCUS_LOSS,
-                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+                -> {
                     Log.i(TAG, "Audio focus lost or call active. Pausing wake-word listener.")
                     isPausedByCallOrFocus.set(true)
                     wakeWordListener?.pause()

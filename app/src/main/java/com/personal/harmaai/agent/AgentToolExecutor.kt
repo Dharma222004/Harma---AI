@@ -19,7 +19,7 @@ class AgentToolExecutor(
 ) {
     private val appContext = context.applicationContext
     private val directTools = ToolRegistry(appContext)
-    private val allSpecs = directTools.specs + ACCESSIBILITY_SPECS
+    private val allSpecs = (directTools.specs + ACCESSIBILITY_SPECS).map(::withReasoningFields)
     private val specsByName = allSpecs.associateBy(ToolSpec::name)
 
     val specs: List<ToolSpec> get() = allSpecs
@@ -28,12 +28,13 @@ class AgentToolExecutor(
         call: AgentToolCall,
         observation: ScreenObservation?,
     ): ToolResult {
-        val spec = specsByName[call.name]
+        val normalizedName = if (call.name == "open_settings_panel") "open_settings" else call.name
+        val spec = specsByName[call.name] ?: specsByName[normalizedName]
             ?: return ToolResult.failure("Unknown tool '${call.name}'.")
 
         appPolicyFailure(call, observation)?.let { return ToolResult.failure(it) }
 
-        if (call.name in PROTECTED_SCREEN_ACTIONS) {
+        if (normalizedName in PROTECTED_SCREEN_ACTIONS) {
             safetyGate.blockedByProtectedScreen(observation)?.let { blocked ->
                 return ToolResult.failure(blocked)
             }
@@ -48,16 +49,16 @@ class AgentToolExecutor(
             )
         ) {
             val approved = AgentRuntime.requestConfirmation(
-                toolName = call.name,
+                toolName = normalizedName,
                 description = safetyGate.confirmationDescription(spec),
                 arguments = safeArguments(call),
             )
-            if (!approved) return ToolResult.failure("The user rejected ${call.name}.")
+            if (!approved) return ToolResult.failure("The user rejected $normalizedName.")
         }
 
-        if (directTools.find(call.name) != null) {
-            val result = directTools.execute(call.name, call.arguments)
-            if (call.name == "open_app" && result.success) {
+        if (directTools.find(normalizedName) != null) {
+            val result = directTools.execute(normalizedName, call.arguments)
+            if (normalizedName == "open_app" && result.success) {
                 val expectedPkg = result.data.optString("expected_package")
                 if (expectedPkg.isNotBlank()) {
                     AgentAccessibilityService.current()?.awaitForegroundPackage(expectedPkg)
@@ -67,7 +68,7 @@ class AgentToolExecutor(
         }
 
         val accessibility = AgentAccessibilityService.current()
-        return when (call.name) {
+        return when (normalizedName) {
             "get_screen" -> {
                 if (accessibility == null) {
                     return ToolResult.failure("Accessibility service is not enabled. Please enable Harma AI in Android Accessibility settings.")
@@ -84,12 +85,16 @@ class AgentToolExecutor(
 
             "tap" -> accessibilityResult(
                 accessibility,
-                accessibility?.tapNode(call.arguments.optInt("index", -1)),
+                accessibility?.tapNodeWithFallback(call.arguments.optInt("index", -1)),
             )
 
             "click_text" -> accessibilityResult(
                 accessibility,
-                accessibility?.clickByText(call.arguments.optString("text")),
+                accessibility?.clickByText(
+                    text = call.arguments.optString("text"),
+                    exact = call.arguments.optBoolean("exact", false),
+                    excludeEditable = call.arguments.optBoolean("exclude_editable", false),
+                ),
             )
 
             "click_id" -> accessibilityResult(
@@ -110,8 +115,8 @@ class AgentToolExecutor(
             "wait_for" -> {
                 val target = call.arguments.optString("text").ifBlank { call.arguments.optString("package") }
                 val timeout = call.arguments.optLong("timeout", 5000L).coerceIn(1000L, 10000L)
-                val inFg = accessibility?.awaitForegroundPackage(target, timeout) ?: false
-                if (inFg) {
+                val found = accessibility?.waitForTextOrPackage(target, timeout) ?: false
+                if (found) {
                     ToolResult.success("Waited and found '$target'.")
                 } else {
                     ToolResult.failure("Timed out waiting for '$target'.")
@@ -126,22 +131,37 @@ class AgentToolExecutor(
                 ),
             )
 
-            "long_press" -> accessibilityResult(
-                accessibility,
-                accessibility?.longPress(
-                    call.arguments.optDouble("x", -1.0).toFloat(),
-                    call.arguments.optDouble("y", -1.0).toFloat(),
-                    call.arguments.optLong("duration_ms", 800L),
-                ),
-            )
+            "long_press" -> {
+                val index = call.arguments.optInt("index", -1)
+                val durationMs = call.arguments.optLong("duration_ms", 800L)
+                if (index >= 0) {
+                    accessibilityResult(
+                        accessibility,
+                        accessibility?.longPressNode(index, durationMs),
+                    )
+                } else {
+                    accessibilityResult(
+                        accessibility,
+                        accessibility?.longPress(
+                            call.arguments.optDouble("x", -1.0).toFloat(),
+                            call.arguments.optDouble("y", -1.0).toFloat(),
+                            durationMs,
+                        ),
+                    )
+                }
+            }
 
-            "type_text" -> accessibilityResult(
-                accessibility,
-                accessibility?.setNodeText(
+            "type_text" -> {
+                val res = accessibility?.setNodeText(
                     call.arguments.optInt("index", -1),
                     call.arguments.optString("text"),
-                ),
-            )
+                )
+                if (res != null && res.success && call.arguments.optBoolean("submit", false)) {
+                    delay(150L)
+                    accessibility.performImeEnter()
+                }
+                accessibilityResult(accessibility, res)
+            }
 
             "scroll" -> accessibilityResult(
                 accessibility,
@@ -171,14 +191,16 @@ class AgentToolExecutor(
                 ToolResult(result.success, result.message)
             }
 
-            "press", "press_key" -> {
-                val key = call.arguments.optString("key").ifBlank { call.arguments.optString("action") }
+            "press", "press_key", "back", "home", "recents" -> {
+                val key = when (normalizedName) {
+                    "back", "home", "recents" -> normalizedName
+                    else -> call.arguments.optString("key").ifBlank { call.arguments.optString("action") }
+                }
                 when (key.lowercase()) {
-                    "enter", "search" -> {
-                        // Focus + ime search or coordinates
-                        val ok = accessibility?.performGlobal("back") != null
-                        ToolResult.success("Pressed $key.")
-                    }
+                    "enter", "search", "send", "go", "submit" -> accessibilityResult(
+                        accessibility,
+                        accessibility?.performImeEnter(),
+                    )
                     else -> accessibilityResult(
                         accessibility,
                         accessibility?.performGlobal(key),
@@ -197,7 +219,7 @@ class AgentToolExecutor(
                 val screenshot = accessibility.captureScreenshot()
                 if (screenshot.success) {
                     ToolResult.success(
-                        "Screenshot captured for visual analysis.",
+                        "Screenshot captured with Set-of-Marks overlay for visual analysis.",
                         JSONObject().put("include_screenshot", true),
                     )
                 } else {
@@ -219,14 +241,23 @@ class AgentToolExecutor(
             )
 
             "read_notifications" -> {
-                if (accessibility != null) {
+                val readResult = com.personal.harmaai.notifications.HarmaNotificationListenerService.readRecentMessages(
+                    context = appContext,
+                    limit = 10,
+                )
+                if (readResult.notifications.isNotEmpty()) {
+                    ToolResult.success(
+                        readResult.summary,
+                        com.personal.harmaai.notifications.HarmaNotificationListenerService.recentJson(10),
+                    )
+                } else if (accessibility != null) {
                     accessibility.performGlobal("notifications")
                     ToolResult.success(
                         "Opened notification panel to inspect notifications on screen.",
                         JSONObject().put("opened_panel", true),
                     )
                 } else {
-                    ToolResult.failure("Accessibility service is required to open the notification panel.")
+                    ToolResult.failure(readResult.summary)
                 }
             }
 
@@ -284,32 +315,54 @@ class AgentToolExecutor(
     }
 
     companion object {
-        private val UI_TOOLS = setOf("get_screen", "tap", "tap_xy", "long_press", "type_text", "swipe", "scroll", "press", "press_key", "take_screenshot", "screenshot", "click_text", "click_id", "click_desc", "scroll_to_find", "wait_for")
-        private val PROTECTED_SCREEN_ACTIONS = setOf("tap", "tap_xy", "long_press", "type_text", "swipe", "scroll", "click_text", "click_id", "click_desc")
+        private val UI_TOOLS = setOf(
+            "get_screen", "tap", "tap_xy", "long_press", "type_text", "swipe", "scroll",
+            "press", "press_key", "back", "home", "recents", "take_screenshot", "screenshot",
+            "click_text", "click_id", "click_desc", "scroll_to_find", "wait_for",
+        )
+        private val PROTECTED_SCREEN_ACTIONS = setOf(
+            "tap", "tap_xy", "long_press", "type_text", "swipe", "scroll",
+            "click_text", "click_id", "click_desc",
+        )
+
+        private fun withReasoningFields(spec: ToolSpec): ToolSpec {
+            val params = JSONObject(spec.parameters.toString())
+            val props = params.optJSONObject("properties") ?: JSONObject()
+            if (!props.has("observation")) {
+                props.put("observation", string("Brief summary of current screen state and previous step verification."))
+            }
+            if (!props.has("expected_outcome")) {
+                props.put("expected_outcome", string("Expected visible screen or system change after this action."))
+            }
+            params.put("properties", props)
+            return spec.copy(parameters = params)
+        }
 
         private val ACCESSIBILITY_SPECS = listOf(
-            spec("get_screen", "Read the current Android accessibility tree.", emptyMap()),
-            spec("tap", "Tap a visible element by the index from the latest screen observation.", mapOf("index" to integer("Element index.")), listOf("index")),
-            spec("click_text", "Click an on-screen element matching specific text.", mapOf("text" to string("Visible text to click.")), listOf("text")),
+            spec("get_screen", "Read the current Android multi-window accessibility snapshot.", emptyMap()),
+            spec("tap", "Tap a visible element by its numeric [index] from the current screen snapshot.", mapOf("index" to integer("Element index from the current snapshot.")), listOf("index")),
+            spec("long_press", "Long-press a visible element by its numeric [index] from the current snapshot.", mapOf("index" to integer("Element index from the current snapshot."), "duration_ms" to integer("Duration in milliseconds.")), listOf("index")),
+            spec("type_text", "Enter text into an editable element by [index] (uses ACTION_SET_TEXT with clipboard paste fallback). Set submit=true to trigger IME Enter.", mapOf("index" to integer("Editable element index."), "text" to string("Text to enter."), "submit" to boolean("Whether to submit via IME Enter after typing.")), listOf("index", "text")),
+            spec("click_text", "Click an on-screen element matching visible text (disambiguates clickable rows from static headers).", mapOf("text" to string("Visible text to click."), "exclude_editable" to boolean("Exclude editable search boxes when clicking a search result.")), listOf("text")),
             spec("click_id", "Click an element by its resource ID name.", mapOf("id" to string("View ID resource name.")), listOf("id")),
             spec("click_desc", "Click an element by its accessibility content description.", mapOf("desc" to string("Content description.")), listOf("desc")),
-            spec("scroll_to_find", "Scroll vertically to search for and tap an element with the given text.", mapOf("text" to string("Text to find.")), listOf("text")),
-            spec("wait_for", "Wait for a specific text or package to appear on the screen.", mapOf("text" to string("Target text or package name to wait for."), "timeout" to integer("Timeout in ms.")), listOf("text")),
-            spec("press_key", "Perform an Android key or global action (back, home, recents, enter, search).", mapOf("key" to string("Key or action name.")), listOf("key")),
-            spec("screenshot", "Capture a high-resolution screenshot for vision inspection.", emptyMap()),
-            spec("speak", "Speak an informative message to the user.", mapOf("text" to string("Message to speak.")), listOf("text")),
-            spec("done", "Complete the task with evidence of verification.", mapOf("summary" to string("Summary of verified completed task."), "evidence" to string("Verification evidence.")), listOf("summary")),
-            spec("tap_xy", "Tap screen coordinates only when no indexed element exists.", mapOf("x" to number("X coordinate."), "y" to number("Y coordinate."), "purpose" to string("Visible target purpose for safety checks.")), listOf("x", "y")),
-            spec("long_press", "Long press screen coordinates.", mapOf("x" to number("X coordinate."), "y" to number("Y coordinate."), "duration_ms" to integer("Duration in milliseconds.")), listOf("x", "y")),
-            spec("type_text", "Enter text into an editable element. Never use for passwords, OTPs, PINs, or card data.", mapOf("index" to integer("Editable element index."), "text" to string("Text to enter.")), listOf("index", "text")),
-            spec("swipe", "Swipe in a direction or with explicit coordinates.", mapOf("direction" to string("up, down, left, or right"), "x1" to number("Optional start X."), "y1" to number("Optional start Y."), "x2" to number("Optional end X."), "y2" to number("Optional end Y."), "duration_ms" to integer("Optional duration."))),
             spec("scroll", "Scroll the screen or an indexed scrollable container.", mapOf("direction" to string("up/down/forward/backward"), "index" to integer("Optional scrollable element index.")), listOf("direction")),
-            spec("press", "Perform an Android global key/action.", mapOf("key" to enumString("Global action.", listOf("back", "home", "recents", "notifications", "quick_settings", "lock_screen"))), listOf("key")),
+            spec("scroll_to_find", "Scroll vertically to search for and tap an element with the given text.", mapOf("text" to string("Text to find.")), listOf("text")),
+            spec("swipe", "Swipe in a direction (up, down, left, right).", mapOf("direction" to string("up, down, left, or right"), "duration_ms" to integer("Optional duration."))),
+            spec("press_key", "Perform an Android key or global action (back, home, recents, enter, search).", mapOf("key" to string("Key or action name.")), listOf("key")),
+            spec("back", "Navigate back (GLOBAL_ACTION_BACK).", emptyMap()),
+            spec("home", "Go to the home screen (GLOBAL_ACTION_HOME).", emptyMap()),
+            spec("recents", "Open recent apps (GLOBAL_ACTION_RECENTS).", emptyMap()),
+            spec("open_settings_panel", "Open an Android Settings panel (wifi, bluetooth, sound, display, apps, accessibility, battery).", mapOf("panel" to string("Panel name.")), listOf("panel")),
+            spec("wait_for", "Wait for specific text or package name to appear on screen.", mapOf("text" to string("Target text or package name to wait for."), "timeout" to integer("Timeout in ms.")), listOf("text")),
             spec("wait", "Wait briefly for an app or screen transition.", mapOf("milliseconds" to integer("Wait duration from 100 to 10000.")), listOf("milliseconds")),
-            spec("take_screenshot", "Capture the screen for vision analysis when the UI tree is insufficient.", emptyMap()),
+            spec("take_screenshot", "Capture the screen with numbered Set-of-Marks (SoM) badges when the UI tree is insufficient (WebView, Flutter, canvas).", emptyMap()),
+            spec("screenshot", "Alias for take_screenshot with Set-of-Marks overlay.", emptyMap()),
+            spec("speak", "Speak an informative message to the user.", mapOf("text" to string("Message to speak.")), listOf("text")),
             ToolSpec("read_notifications", "Open notification shade to view notifications on screen.", ToolRisk.SAFE, schema(emptyMap())),
             spec("ask_user", "Pause and ask the user for essential missing information.", mapOf("question" to string("Question to show.")), listOf("question")),
-            spec("finish", "Finish the task after verifying success or failure.", mapOf("success" to boolean("Whether the task succeeded."), "summary" to string("Short final result.")), listOf("success", "summary")),
+            spec("done", "Complete the task with evidence of verification.", mapOf("summary" to string("Summary of verified completed task."), "evidence" to string("Verification evidence.")), listOf("summary")),
+            spec("finish", "Finish the task after verifying success or failure on screen.", mapOf("success" to boolean("Whether the task succeeded."), "summary" to string("Short final verified result.")), listOf("success", "summary")),
         )
 
         private fun spec(
@@ -329,9 +382,7 @@ class AgentToolExecutor(
             .apply { if (required.isNotEmpty()) put("required", JSONArray(required)) }
 
         private fun string(description: String) = JSONObject().put("type", "string").put("description", description)
-        private fun enumString(description: String, values: List<String>) = string(description).put("enum", JSONArray(values))
         private fun integer(description: String) = JSONObject().put("type", "integer").put("description", description)
-        private fun number(description: String) = JSONObject().put("type", "number").put("description", description)
         private fun boolean(description: String) = JSONObject().put("type", "boolean").put("description", description)
     }
 }

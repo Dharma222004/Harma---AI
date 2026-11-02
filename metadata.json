@@ -1,0 +1,7 @@
+{
+  "name": "Harma AI",
+  "description": "Autonomous voice-first Android agent using AccessibilityService, fast-path local routing, and multimodal LLM reasoning to execute real phone actions.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

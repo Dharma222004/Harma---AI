@@ -2,14 +2,15 @@ package com.personal.harmaai.accessibility
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Bundle
 import android.os.SystemClock
-import android.util.Base64
 import android.util.Log
-import android.util.SparseArray
 import android.view.Display
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
@@ -19,15 +20,10 @@ import com.personal.harmaai.perf.HarmaPerf
 import com.personal.harmaai.service.HarmaAgentService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
-import org.json.JSONArray
-import org.json.JSONObject
-import java.io.ByteArrayOutputStream
 import java.util.ArrayDeque
 import kotlin.coroutines.resume
-import kotlin.math.max
 
 class AgentAccessibilityService : AccessibilityService() {
-    private val indexedNodes = SparseArray<AccessibilityNodeInfo>()
 
     @Volatile
     private var lastWindowChangeAt = 0L
@@ -35,8 +31,14 @@ class AgentAccessibilityService : AccessibilityService() {
     @Volatile
     private var lastPackageName = ""
 
-    private var previousSignatures = listOf<String>()
-    private var previousPackage = ""
+    @Volatile
+    private var lastActivityName = ""
+
+    @Volatile
+    private var lastVolumeDownAt = 0L
+
+    @Volatile
+    private var latestObservation: ScreenObservation? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -44,9 +46,35 @@ class AgentAccessibilityService : AccessibilityService() {
         lastWindowChangeAt = SystemClock.uptimeMillis()
     }
 
+    override fun onKeyEvent(event: KeyEvent?): Boolean {
+        if (event?.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN && event.action == KeyEvent.ACTION_DOWN) {
+            val status = com.personal.harmaai.agent.AgentRuntime.state.value.status
+            if (status == com.personal.harmaai.agent.AgentStatus.RUNNING ||
+                status == com.personal.harmaai.agent.AgentStatus.WAITING_FOR_CONFIRMATION
+            ) {
+                val now = SystemClock.uptimeMillis()
+                if (now - lastVolumeDownAt <= 800L) {
+                    lastVolumeDownAt = 0L
+                    Log.i(TAG, "Emergency double Volume-Down detected! Stopping Harma AI task.")
+                    HarmaAgentService.stopTask(this)
+                    return true
+                }
+                lastVolumeDownAt = now
+            }
+        }
+        return super.onKeyEvent(event)
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
-        event.packageName?.toString()?.let { lastPackageName = it }
+        event.packageName?.toString()?.takeIf { it.isNotBlank() }?.let { pkg ->
+            lastPackageName = pkg
+        }
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            event.className?.toString()?.takeIf { it.isNotBlank() }?.let { cls ->
+                lastActivityName = cls.substringAfterLast('.')
+            }
+        }
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED,
@@ -63,280 +91,335 @@ class AgentAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         if (instance === this) instance = null
-        clearIndexedNodes()
+        latestObservation = null
         super.onDestroy()
     }
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
         if (instance === this) instance = null
-        clearIndexedNodes()
+        latestObservation = null
         return super.onUnbind(intent)
     }
 
     @Synchronized
     fun captureObservation(maxNodes: Int = DEFAULT_MAX_NODES, sessionId: String = ""): ScreenObservation {
         val obsStart = SystemClock.uptimeMillis()
-        clearIndexedNodes()
-        var root: AccessibilityNodeInfo? = rootInActiveWindow
-        var attempts = 0
-        while (root == null && attempts < 3) {
-            attempts++
-            try {
-                Thread.sleep(50L)
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-                break
-            }
-            root = rootInActiveWindow
-        }
-
-        if (root == null) {
-            val activeWindow = try {
-                windows.firstOrNull { it.isActive }
-                    ?: windows.firstOrNull { it.isFocused }
-                    ?: windows.firstOrNull { it.root != null }
-            } catch (_: Exception) {
-                null
-            }
-            root = activeWindow?.root
-        }
-
-        if (root == null) {
-            val isKnownSecureApp = lastPackageName in SECURE_APP_PACKAGES ||
-                lastPackageName.contains("paytm", ignoreCase = true) ||
-                lastPackageName.contains("paisa", ignoreCase = true) ||
-                lastPackageName.contains("upi", ignoreCase = true)
-
-            val reason = if (isKnownSecureApp) {
-                "Screen content is protected by system security (FLAG_SECURE, such as payment or UPI PIN screen). Harma AI will not read or enter sensitive credentials."
-            } else {
-                "No active accessibility window. The screen may be locked, transition in progress, or protected."
-            }
-
-            val unavailableJson = JSONObject()
-                .put("package", lastPackageName)
-                .put("unavailable", true)
-                .put("protected", isKnownSecureApp)
-                .put("reason", reason)
-                .toString()
-            return ScreenObservation(
-                packageName = lastPackageName,
-                windowTitle = "",
-                nodes = emptyList(),
-                compactJson = unavailableJson,
-                protectedContent = isKnownSecureApp,
-                unavailable = true,
-                capturedAtMillis = System.currentTimeMillis(),
-            )
-        }
-
-        val snapshots = ArrayList<UiNodeSnapshot>(maxNodes.coerceAtMost(64))
-        val queue = ArrayDeque<AccessibilityNodeInfo>()
-        queue.add(root)
-        var protectedContent = false
-        val observedPackageName = root.packageName?.toString().orEmpty()
         val displayMetrics = resources.displayMetrics
         val screenWidth = displayMetrics.widthPixels
         val screenHeight = displayMetrics.heightPixels
 
-        val currentSignatures = mutableListOf<String>()
-
-        while (queue.isNotEmpty() && snapshots.size < maxNodes) {
-            val node = queue.removeFirst()
-            try {
-                if (!node.isVisibleToUser) continue
-
-                for (childIndex in 0 until node.childCount) {
-                    node.getChild(childIndex)?.let(queue::addLast)
-                }
-
-                val text = safeText(node).take(MAX_FIELD_LENGTH)
-                val description = node.contentDescription?.toString()?.trim().orEmpty().take(MAX_FIELD_LENGTH)
-                val rawId = node.viewIdResourceName.orEmpty()
-                val shortId = rawId.substringAfterLast(":id/").take(32)
-                val className = node.className?.toString().orEmpty()
-                val editable = node.isEditable || className.contains("EditText", ignoreCase = true)
-                val actionable = node.isClickable || node.isScrollable || editable || node.isCheckable
-
-                if (text.isBlank() && description.isBlank() && shortId.isBlank() && !actionable) continue
-
-                val bounds = Rect().also(node::getBoundsInScreen)
-                if (bounds.width() <= 0 || bounds.height() <= 0 || bounds.right <= 0 || bounds.bottom <= 0 ||
-                    bounds.left >= screenWidth || bounds.top >= screenHeight
-                ) {
-                    continue
-                }
-
-                val password = node.isPassword
-                protectedContent = protectedContent || password
-
-                val sig = "$text|$description|$shortId|${bounds.left},${bounds.top},${bounds.right},${bounds.bottom}|$actionable"
-                if (currentSignatures.isNotEmpty() && currentSignatures.last() == sig) continue
-                currentSignatures.add(sig)
-
-                val index = snapshots.size
-                indexedNodes.put(index, AccessibilityNodeInfo.obtain(node))
-                snapshots += UiNodeSnapshot(
-                    index = index,
-                    className = className.takeLast(32),
-                    text = if (password) "[PROTECTED]" else text,
-                    contentDescription = description,
-                    viewId = shortId,
-                    bounds = "${bounds.left},${bounds.top},${bounds.right},${bounds.bottom}",
-                    clickable = node.isClickable,
-                    editable = editable,
-                    scrollable = node.isScrollable,
-                    focused = node.isFocused,
-                    checked = node.isChecked,
-                    password = password,
-                )
-            } finally {
-                if (node !== root) node.recycle()
-            }
+        val windowList = try {
+            windows ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
         }
-        root.recycle()
-
-        val packageName = observedPackageName.ifBlank { lastPackageName }
-        val windowTitle = windows.firstOrNull { it.isActive }?.title?.toString().orEmpty()
-
-        val samePackage = packageName == previousPackage
-        val matchingSigs = currentSignatures.count { it in previousSignatures }
-        val similarity = if (currentSignatures.isNotEmpty()) matchingSigs.toFloat() / currentSignatures.size else 0f
-        val isDiff = samePackage && similarity >= 0.85f && currentSignatures.size > 5
-
-        val compactJson = if (isDiff) {
-            val changedNodes = JSONArray()
-            snapshots.filter { "${it.text}|${it.contentDescription}|${it.viewId}|${it.bounds}|${it.clickable || it.editable}" !in previousSignatures }
-                .forEach { node ->
-                    changedNodes.put(
-                        JSONObject()
-                            .put("i", node.index)
-                            .putOpt("t", node.text.ifBlank { null })
-                            .putOpt("d", node.contentDescription.ifBlank { null })
-                            .putOpt("id", node.viewId.ifBlank { null })
-                            .put("b", node.bounds)
-                            .putOpt("click", if (node.clickable) true else null)
-                            .putOpt("edit", if (node.editable) true else null),
-                    )
-                }
-            JSONObject()
-                .put("package", packageName)
-                .put("diff", true)
-                .put("changed", changedNodes)
-                .toString()
-        } else {
-            val nodeArray = JSONArray()
-            snapshots.forEach { node ->
-                nodeArray.put(
-                    JSONObject()
-                        .put("i", node.index)
-                        .putOpt("t", node.text.ifBlank { null })
-                        .putOpt("d", node.contentDescription.ifBlank { null })
-                        .putOpt("id", node.viewId.ifBlank { null })
-                        .put("b", node.bounds)
-                        .putOpt("click", if (node.clickable) true else null)
-                        .putOpt("edit", if (node.editable) true else null)
-                        .putOpt("scroll", if (node.scrollable) true else null)
-                        .putOpt("password", if (node.password) true else null),
-                )
-            }
-            JSONObject()
-                .put("package", packageName)
-                .putOpt("title", windowTitle.ifBlank { null })
-                .put("protected", protectedContent)
-                .put("nodes", nodeArray)
-                .toString()
+        val fallbackRoot = try {
+            rootInActiveWindow
+        } catch (_: Exception) {
+            null
         }
 
-        previousSignatures = currentSignatures
-        previousPackage = packageName
+        val observation = ScreenParser.parse(
+            windows = windowList,
+            fallbackRoot = fallbackRoot,
+            lastPackageName = lastPackageName,
+            lastActivityName = lastActivityName,
+            screenWidth = screenWidth,
+            screenHeight = screenHeight,
+            maxNodes = maxNodes,
+        )
+        latestObservation = observation
 
         val obsDuration = SystemClock.uptimeMillis() - obsStart
-        val charCount = compactJson.length
+        val charCount = observation.compactJson.length
         val estTokens = charCount / 4
         if (sessionId.isNotBlank()) {
-            HarmaPerf.onGetScreen(sessionId, obsDuration, snapshots.size, charCount, estTokens)
+            HarmaPerf.onGetScreen(sessionId, obsDuration, observation.nodes.size, charCount, estTokens)
         }
-
-        return ScreenObservation(
-            packageName = packageName,
-            windowTitle = windowTitle,
-            nodes = snapshots,
-            compactJson = compactJson,
-            protectedContent = protectedContent,
-            unavailable = false,
-            capturedAtMillis = System.currentTimeMillis(),
-        )
+        return observation
     }
 
-    @Synchronized
+    private fun resolveLiveForIndex(index: Int): Pair<ElementFingerprint, ElementResolver.ResolvedMatch?>? {
+        val obs = latestObservation ?: captureObservation()
+        val fp = obs.fingerprintAt(index) ?: return null
+        val windowList = try {
+            windows ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val match = ElementResolver.resolveByFingerprint(windowList, rootInActiveWindow, fp)
+        return fp to match
+    }
+
     fun tapNode(index: Int): AccessibilityActionResult {
-        var node = indexedNodes[index]
-            ?: return failure("Element $index is not available. Refresh the screen first.")
+        val resolved = resolveLiveForIndex(index)
+            ?: return failure("Element [$index] is not in the current snapshot. Re-observe the screen first.")
+        val (fp, match) = resolved
+        val node = match?.node
+            ?: return failure("Element [$index] ('${fp.text.ifBlank { fp.contentDescription }}') moved or is no longer visible.")
         if (node.isPassword) return failure("Refusing to interact with a password field.")
 
-        if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            return success("Tapped element $index.")
+        if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            return success("Tapped element [$index] ('${fp.text.ifBlank { fp.contentDescription.ifBlank { fp.className } }}') via ACTION_CLICK.")
         }
 
+        val screenArea = resources.displayMetrics.widthPixels * resources.displayMetrics.heightPixels
         var parent = node.parent
         repeat(MAX_PARENT_SEARCH) {
-            if (parent == null) return@repeat
             val current = parent ?: return@repeat
-            if (current.isClickable && current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                current.recycle()
-                return success("Tapped clickable parent of element $index.")
+            val parentBounds = Rect().also(current::getBoundsInScreen)
+            val area = parentBounds.width() * parentBounds.height()
+            // Avoid clicking huge container/list ancestors that cover >60% of the screen
+            if (current.isClickable && area in 1..(screenArea * 6 / 10)) {
+                if (current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    return success("Tapped clickable parent of element [$index].")
+                }
             }
-            val next = current.parent
-            current.recycle()
-            parent = next
+            parent = current.parent
         }
-        parent?.recycle()
-        return failure("Element $index was not clickable.")
+        return failure("Element [$index] did not accept ACTION_CLICK.")
     }
 
-    @Synchronized
-    fun setNodeText(index: Int, text: String): AccessibilityActionResult {
-        val node = indexedNodes[index]
-            ?: return failure("Element $index is not available. Refresh the screen first.")
-        if (node.isPassword) return failure("Refusing to type into a password field.")
-        if (!node.isEditable && !node.className?.toString().orEmpty().contains("EditText")) {
-            return failure("Element $index is not editable.")
+    suspend fun tapNodeWithFallback(index: Int): AccessibilityActionResult {
+        val resolved = resolveLiveForIndex(index)
+            ?: return failure("Element [$index] is not in the current snapshot. Re-observe the screen first.")
+        val (fp, match) = resolved
+        val direct = tapNode(index)
+        if (direct.success) return direct
+
+        val liveBounds = match?.bounds
+        val cx = liveBounds?.centerX()?.toFloat() ?: fp.centerX.toFloat()
+        val cy = liveBounds?.centerY()?.toFloat() ?: fp.centerY.toFloat()
+        if (cx > 0f && cy > 0f) {
+            val tapRes = tapCoordinates(cx, cy)
+            if (tapRes.success) {
+                return success("Tapped element [$index] at (${cx.toInt()}, ${cy.toInt()}) via gesture fallback.")
+            }
+        }
+        return direct
+    }
+
+    fun resolveLiveByFingerprint(fp: ElementFingerprint): ElementResolver.ResolvedMatch? {
+        val windowList = try {
+            windows ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+        return ElementResolver.resolveByFingerprint(windowList, rootInActiveWindow, fp)
+    }
+
+    suspend fun tapByFingerprint(fp: ElementFingerprint): AccessibilityActionResult {
+        val match = resolveLiveByFingerprint(fp)
+            ?: return failure("Learned UI element ('${fp.text.ifBlank { fp.contentDescription.ifBlank { fp.viewId } }}') was not found on the current screen.")
+        val node = match.node
+        if (node.isPassword) return failure("Refusing to interact with a password field.")
+
+        if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            return success("Tapped learned element ('${fp.text.ifBlank { fp.contentDescription.ifBlank { fp.viewId } }}') via ACTION_CLICK.")
         }
 
+        val screenArea = resources.displayMetrics.widthPixels * resources.displayMetrics.heightPixels
+        var parent = node.parent
+        repeat(MAX_PARENT_SEARCH) {
+            val current = parent ?: return@repeat
+            val parentBounds = Rect().also(current::getBoundsInScreen)
+            val area = parentBounds.width() * parentBounds.height()
+            if (current.isClickable && area in 1..(screenArea * 6 / 10)) {
+                if (current.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    return success("Tapped clickable parent of learned element.")
+                }
+            }
+            parent = current.parent
+        }
+
+        val cx = match.bounds.centerX().toFloat()
+        val cy = match.bounds.centerY().toFloat()
+        if (cx > 0f && cy > 0f) {
+            val tapRes = tapCoordinates(cx, cy)
+            if (tapRes.success) {
+                return success("Tapped learned element at (${cx.toInt()}, ${cy.toInt()}) via gesture fallback.")
+            }
+        }
+        return failure("Learned element did not accept tap.")
+    }
+
+    suspend fun typeTextByFingerprint(fp: ElementFingerprint, text: String, submit: Boolean = false): AccessibilityActionResult {
+        val match = resolveLiveByFingerprint(fp)
+        val node = match?.node?.takeIf {
+            it.isEditable || it.className?.toString().orEmpty().contains("EditText", ignoreCase = true)
+        } ?: return failure("Learned editable field ('${fp.hintText.ifBlank { fp.viewId }}') was not found on the current screen.")
+
+        if (node.isPassword) return failure("Refusing to type into a password field.")
+        node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
         val arguments = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
         }
-        return if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
-            success("Entered text in element $index.")
+        val typed = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments) || runCatching {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            clipboard?.setPrimaryClip(ClipData.newPlainText("HarmaInput", text))
+            node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+        }.getOrDefault(false)
+
+        if (!typed) {
+            return failure("Android rejected text entry for learned editable field.")
+        }
+        if (submit) {
+            kotlinx.coroutines.delay(150L)
+            performImeEnter()
+        }
+        return success("Entered text into learned editable field.")
+    }
+
+    suspend fun longPressNode(index: Int, durationMs: Long = 800L): AccessibilityActionResult {
+        val resolved = resolveLiveForIndex(index)
+            ?: return failure("Element [$index] is not in the current snapshot. Re-observe the screen first.")
+        val (fp, match) = resolved
+        val node = match?.node
+        if (node != null) {
+            if (node.isPassword) return failure("Refusing to interact with a password field.")
+            if (node.isLongClickable && node.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)) {
+                return success("Long-pressed element [$index] via ACTION_LONG_CLICK.")
+            }
+        }
+        val cx = (match?.bounds?.centerX() ?: fp.centerX).toFloat()
+        val cy = (match?.bounds?.centerY() ?: fp.centerY).toFloat()
+        if (cx > 0f && cy > 0f) {
+            return longPress(cx, cy, durationMs)
+        }
+        return failure("Could not long-press element [$index].")
+    }
+
+    fun setNodeText(index: Int, text: String): AccessibilityActionResult {
+        var targetNode: AccessibilityNodeInfo? = null
+        if (index >= 0) {
+            val resolved = resolveLiveForIndex(index)
+            val candidate = resolved?.second?.node
+            if (candidate != null && (candidate.isEditable || candidate.className?.toString().orEmpty().contains("EditText", ignoreCase = true))) {
+                targetNode = candidate
+            }
+        }
+        if (targetNode == null) {
+            val root = getActiveRootNode()
+            if (root != null) {
+                targetNode = findNode(root) {
+                    (it.isEditable || it.className?.toString().orEmpty().contains("EditText", ignoreCase = true)) && it.isFocused
+                } ?: findNode(root) {
+                    it.isEditable || it.className?.toString().orEmpty().contains("EditText", ignoreCase = true)
+                }
+            }
+        }
+
+        val node = targetNode
+            ?: return failure("Element [$index] is not editable and no editable input field was found on screen.")
+        if (node.isPassword) return failure("Refusing to type into a password field.")
+
+        node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        val arguments = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)) {
+            return success("Entered text '$text' via ACTION_SET_TEXT.")
+        }
+
+        // Step 6 Fallback: Clipboard paste when ACTION_SET_TEXT is rejected by custom/WebView inputs
+        val pasted = runCatching {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            clipboard?.setPrimaryClip(ClipData.newPlainText("HarmaInput", text))
+            node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+        }.getOrDefault(false)
+
+        return if (pasted) {
+            success("Entered text '$text' via clipboard paste fallback.")
         } else {
-            failure("Android rejected text entry for element $index.")
+            failure("Android rejected text entry and paste for element [$index].")
         }
     }
 
-    @Synchronized
+    suspend fun performImeEnter(): AccessibilityActionResult {
+        val root = getActiveRootNode()
+        if (root != null) {
+            val editableNode = findNode(root) {
+                (it.isEditable || it.className?.toString().orEmpty().contains("EditText", ignoreCase = true)) && it.isFocused
+            } ?: findNode(root) {
+                it.isEditable || it.className?.toString().orEmpty().contains("EditText", ignoreCase = true)
+            }
+            if (editableNode != null) {
+                val imeEnterId = AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id
+                if (editableNode.performAction(imeEnterId)) {
+                    return success("Submitted input via ACTION_IME_ENTER.")
+                }
+            }
+            val submitBtn = findNode(root) { node ->
+                val desc = node.contentDescription?.toString()?.lowercase().orEmpty()
+                val text = node.text?.toString()?.lowercase().orEmpty()
+                val id = node.viewIdResourceName?.lowercase().orEmpty()
+                val isEdit = node.isEditable || node.className?.toString().orEmpty().contains("EditText", ignoreCase = true)
+                !isEdit && node.isClickable && (
+                    desc == "search" || desc == "send" || desc == "go" ||
+                        text == "search" || text == "send" || text == "go" ||
+                        id.endsWith("search_button") || id.endsWith("send")
+                    )
+            }
+            if (submitBtn != null) {
+                val clicked = clickNodeWithFallback(submitBtn, "submit/search button")
+                if (clicked.success) return clicked
+            }
+        }
+
+        // Only tap keyboard bottom-right corner if the IME keyboard window is actually open
+        val imeOpen = latestObservation?.keyboardVisible == true || isImeWindowVisible()
+        if (imeOpen) {
+            val metrics = resources.displayMetrics
+            val x = metrics.widthPixels * 0.91f
+            val y = metrics.heightPixels * 0.92f
+            val tapRes = tapCoordinates(x, y)
+            if (tapRes.success) {
+                return success("Pressed soft-keyboard Enter/Search key.")
+            }
+        }
+        return failure("Could not trigger Enter/Search action (no IME Enter support or visible Search/Send button).")
+    }
+
+    private fun isImeWindowVisible(): Boolean = try {
+        windows?.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } == true
+    } catch (_: Exception) {
+        false
+    }
+
     fun scrollNode(index: Int?, direction: String): AccessibilityActionResult {
-        var node = index?.let(indexedNodes::get) ?: rootInActiveWindow
+        val resolvedNode = if (index != null && index >= 0) {
+            resolveLiveForIndex(index)?.second?.node
+        } else {
+            null
+        }
+        var node = resolvedNode ?: getActiveRootNode()
             ?: return failure("No active window is available to scroll.")
-        val shouldRecycle = index == null
+
         val action = if (direction.equals("up", true) || direction.equals("backward", true)) {
             AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
         } else {
             AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
         }
 
+        // First check if the target node or one of its ancestors is scrollable
+        var curr: AccessibilityNodeInfo? = node
         repeat(MAX_PARENT_SEARCH + 1) {
-            if (node.isScrollable && node.performAction(action)) {
-                if (shouldRecycle) node.recycle()
+            val candidate = curr ?: return@repeat
+            if (candidate.isScrollable && candidate.performAction(action)) {
                 return success("Scrolled ${direction.lowercase()}.")
             }
-            val parent = node.parent ?: return@repeat
-            if (shouldRecycle || node !== indexedNodes[index ?: -1]) node.recycle()
-            node = parent
+            curr = candidate.parent
         }
-        if (shouldRecycle) node.recycle()
-        return failure("No scrollable container was found.")
+
+        // Otherwise search the tree for the primary scrollable container
+        val scrollableInTree = findNode(node) { it.isScrollable }
+        if (scrollableInTree != null && scrollableInTree.performAction(action)) {
+            return success("Scrolled ${direction.lowercase()} on primary scrollable container.")
+        }
+
+        return failure("No scrollable container accepted scroll ${direction.lowercase()}.")
     }
 
     suspend fun tapCoordinates(x: Float, y: Float): AccessibilityActionResult =
@@ -395,8 +478,13 @@ class AgentAccessibilityService : AccessibilityService() {
         }
     }
 
-    suspend fun captureScreenshot(quality: Int = 70): ScreenshotCapture =
+    suspend fun captureScreenshot(quality: Int = 72): ScreenshotCapture =
         suspendCancellableCoroutine { continuation ->
+            val nodesForOverlay = latestObservation?.nodes ?: emptyList()
+            val metrics = resources.displayMetrics
+            val screenW = metrics.widthPixels
+            val screenH = metrics.heightPixels
+
             takeScreenshot(
                 Display.DEFAULT_DISPLAY,
                 mainExecutor,
@@ -411,47 +499,36 @@ class AgentAccessibilityService : AccessibilityService() {
                             if (hardwareBitmap == null) {
                                 if (continuation.isActive) {
                                     continuation.resume(
-                                        ScreenshotCapture(false, message = "Unable to decode screenshot."),
+                                        ScreenshotCapture(
+                                            success = false,
+                                            message = "Unable to decode screenshot.",
+                                            flaggedSecure = true,
+                                        ),
                                     )
                                 }
                                 return
                             }
                             val copiedBitmap = hardwareBitmap.copy(Bitmap.Config.ARGB_8888, false)
                                 ?: throw IllegalStateException("Unable to copy screenshot bitmap.")
-                            val longestEdge = max(copiedBitmap.width, copiedBitmap.height)
-                            val bitmap = if (longestEdge > MAX_SCREENSHOT_LONG_EDGE) {
-                                val scale = MAX_SCREENSHOT_LONG_EDGE.toFloat() / longestEdge
-                                Bitmap.createScaledBitmap(
-                                    copiedBitmap,
-                                    (copiedBitmap.width * scale).toInt().coerceAtLeast(1),
-                                    (copiedBitmap.height * scale).toInt().coerceAtLeast(1),
-                                    true,
-                                ).also { copiedBitmap.recycle() }
-                            } else {
-                                copiedBitmap
-                            }
-                            val output = ByteArrayOutputStream()
-                            bitmap.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(35, 90), output)
-                            val base64 = Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP)
-                            val encodedWidth = bitmap.width
-                            val encodedHeight = bitmap.height
-                            bitmap.recycle()
+                            hardwareBitmap.recycle()
+
+                            val processed = VisionFallback.processAndAnnotate(
+                                sourceBitmap = copiedBitmap,
+                                nodes = nodesForOverlay,
+                                screenWidth = screenW,
+                                screenHeight = screenH,
+                                quality = quality,
+                            )
+                            copiedBitmap.recycle()
+
                             if (continuation.isActive) {
-                                continuation.resume(
-                                    ScreenshotCapture(
-                                        success = true,
-                                        jpegBase64 = base64,
-                                        width = encodedWidth,
-                                        height = encodedHeight,
-                                        message = "Screenshot captured.",
-                                    ),
-                                )
+                                continuation.resume(processed)
                             }
                         } catch (error: Exception) {
                             if (continuation.isActive) {
                                 continuation.resume(
                                     ScreenshotCapture(
-                                        false,
+                                        success = false,
                                         message = "Screenshot failed: ${error.message}",
                                     ),
                                 )
@@ -465,8 +542,9 @@ class AgentAccessibilityService : AccessibilityService() {
                         if (continuation.isActive) {
                             continuation.resume(
                                 ScreenshotCapture(
-                                    false,
-                                    message = "Screenshot blocked or unavailable (code $errorCode).",
+                                    success = false,
+                                    message = "Screenshot blocked by FLAG_SECURE or unavailable (code $errorCode).",
+                                    flaggedSecure = true,
                                 ),
                             )
                         }
@@ -512,15 +590,16 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     suspend fun awaitWindowSettled(
-        quietPeriodMs: Long = 100L,
-        maxWaitMs: Long = 500L,
+        quietPeriodMs: Long = 200L,
+        maxWaitMs: Long = 1_200L,
     ) {
-        val startedAt = SystemClock.uptimeMillis()
-        while (SystemClock.uptimeMillis() - startedAt < maxWaitMs) {
-            val quietFor = SystemClock.uptimeMillis() - lastWindowChangeAt
-            if (quietFor >= quietPeriodMs) return
-            delay(30L)
-        }
+        StabilityWaiter.awaitStable(
+            lastEventTimestampProvider = { lastWindowChangeAt },
+            actionStartTimeMs = SystemClock.uptimeMillis(),
+            quietPeriodMs = quietPeriodMs,
+            firstEventGraceMs = 280L,
+            maxWaitMs = maxWaitMs,
+        )
     }
 
     private suspend fun dispatchPath(
@@ -567,7 +646,9 @@ class AgentAccessibilityService : AccessibilityService() {
             val node = queue.removeFirst()
             if (predicate(node)) return node
             for (i in 0 until node.childCount) {
-                node.getChild(i)?.let { queue.add(it) }
+                try {
+                    node.getChild(i)?.let { queue.add(it) }
+                } catch (_: Exception) {}
             }
         }
         return null
@@ -577,11 +658,15 @@ class AgentAccessibilityService : AccessibilityService() {
         if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
             return success("Clicked $label via ACTION_CLICK.")
         }
+        val screenArea = resources.displayMetrics.widthPixels * resources.displayMetrics.heightPixels
         var parent = node.parent
         repeat(MAX_PARENT_SEARCH) {
-            if (parent == null) return@repeat
             val curr = parent ?: return@repeat
-            if (curr.isClickable && curr.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            val parentBounds = Rect().also(curr::getBoundsInScreen)
+            val area = parentBounds.width() * parentBounds.height()
+            if (curr.isClickable && area in 1..(screenArea * 6 / 10) &&
+                curr.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            ) {
                 return success("Clicked parent of $label via ACTION_CLICK.")
             }
             parent = curr.parent
@@ -597,15 +682,21 @@ class AgentAccessibilityService : AccessibilityService() {
         return failure("Could not click $label.")
     }
 
-    suspend fun clickByText(text: String, exact: Boolean = false): AccessibilityActionResult {
-        val root = getActiveRootNode() ?: return failure("No active window.")
-        val target = text.trim()
-        val match = findNode(root) { node ->
-            val nodeText = node.text?.toString()?.trim().orEmpty()
-            if (exact) nodeText.equals(target, ignoreCase = true)
-            else nodeText.contains(target, ignoreCase = true)
-        } ?: return failure("Element with text '$text' not found.")
-        return clickNodeWithFallback(match, "text '$text'")
+    suspend fun clickByText(text: String, exact: Boolean = false, excludeEditable: Boolean = false): AccessibilityActionResult {
+        val windowList = try {
+            windows ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val match = ElementResolver.findBestNodeByTextOrDesc(
+            windows = windowList,
+            fallbackRoot = getActiveRootNode(),
+            target = text,
+            exact = exact,
+            matchDescription = false,
+            excludeEditable = excludeEditable,
+        ) ?: return failure("Element with text '$text' not found.")
+        return clickNodeWithFallback(match.node, "text '$text'")
     }
 
     suspend fun clickById(viewId: String): AccessibilityActionResult {
@@ -618,14 +709,20 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     suspend fun clickByContentDescription(desc: String, exact: Boolean = false): AccessibilityActionResult {
-        val root = getActiveRootNode() ?: return failure("No active window.")
-        val target = desc.trim()
-        val match = findNode(root) { node ->
-            val cd = node.contentDescription?.toString()?.trim().orEmpty()
-            if (exact) cd.equals(target, ignoreCase = true)
-            else cd.contains(target, ignoreCase = true)
-        } ?: return failure("Element with content description '$desc' not found.")
-        return clickNodeWithFallback(match, "content description '$desc'")
+        val windowList = try {
+            windows ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val match = ElementResolver.findBestNodeByTextOrDesc(
+            windows = windowList,
+            fallbackRoot = getActiveRootNode(),
+            target = desc,
+            exact = exact,
+            matchDescription = true,
+            excludeEditable = false,
+        ) ?: return failure("Element with content description '$desc' not found.")
+        return clickNodeWithFallback(match.node, "content description '$desc'")
     }
 
     suspend fun tapAt(x: Float, y: Float): AccessibilityActionResult = tapCoordinates(x, y)
@@ -638,19 +735,32 @@ class AgentAccessibilityService : AccessibilityService() {
 
     suspend fun scrollToFind(targetText: String, maxScrolls: Int = 5): AccessibilityActionResult {
         val target = targetText.trim()
+        val windowList = try {
+            windows ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
         repeat(maxScrolls) {
-            val root = getActiveRootNode()
-            if (root != null) {
-                val match = findNode(root) {
-                    it.text?.toString()?.contains(target, ignoreCase = true) == true ||
-                    it.contentDescription?.toString()?.contains(target, ignoreCase = true) == true
-                }
-                if (match != null) {
-                    return clickNodeWithFallback(match, "scrolled-to element '$targetText'")
-                }
+            val match = ElementResolver.findBestNodeByTextOrDesc(
+                windows = windowList,
+                fallbackRoot = getActiveRootNode(),
+                target = target,
+                exact = false,
+                matchDescription = false,
+                excludeEditable = true,
+            ) ?: ElementResolver.findBestNodeByTextOrDesc(
+                windows = windowList,
+                fallbackRoot = getActiveRootNode(),
+                target = target,
+                exact = false,
+                matchDescription = true,
+                excludeEditable = true,
+            )
+            if (match != null) {
+                return clickNodeWithFallback(match.node, "scrolled-to element '$targetText'")
             }
             scrollNode(null, "down")
-            delay(350L)
+            awaitWindowSettled(quietPeriodMs = 180L, maxWaitMs = 700L)
         }
         return failure("Could not find '$targetText' after $maxScrolls scrolls.")
     }
@@ -671,6 +781,26 @@ class AgentAccessibilityService : AccessibilityService() {
     suspend fun waitForPackage(targetPackage: String, timeoutMs: Long = 6000L): Boolean =
         awaitForegroundPackage(targetPackage, timeoutMs)
 
+    suspend fun waitForTextOrPackage(target: String, timeoutMs: Long = 5000L): Boolean {
+        val clean = target.trim()
+        if (clean.isBlank()) return true
+        val start = SystemClock.uptimeMillis()
+        while (SystemClock.uptimeMillis() - start < timeoutMs) {
+            if (isPackageInForeground(clean)) return true
+            val root = getActiveRootNode()
+            if (root != null) {
+                val matched = findNode(root) { node ->
+                    node.text?.toString()?.contains(clean, ignoreCase = true) == true ||
+                        node.contentDescription?.toString()?.contains(clean, ignoreCase = true) == true ||
+                        node.viewIdResourceName?.contains(clean, ignoreCase = true) == true
+                }
+                if (matched != null) return true
+            }
+            delay(150L)
+        }
+        return false
+    }
+
     suspend fun dismissPermissionOrDialogIfPresent(): Boolean {
         val root = getActiveRootNode() ?: return false
         val dialogKeywords = listOf(
@@ -688,7 +818,7 @@ class AgentAccessibilityService : AccessibilityService() {
         val match = findNode(root) { node ->
             val text = node.text?.toString()?.lowercase().orEmpty()
             val desc = node.contentDescription?.toString()?.lowercase().orEmpty()
-            dialogKeywords.any { kw -> text == kw || desc == kw || text.contains(kw) || desc.contains(kw) }
+            node.isClickable && dialogKeywords.any { kw -> text == kw || desc == kw }
         }
         if (match != null) {
             val res = clickNodeWithFallback(match, "dialog button")
@@ -707,9 +837,6 @@ class AgentAccessibilityService : AccessibilityService() {
             "take photo",
             "take picture",
             "capture",
-            "photo",
-            "camera",
-            "snap",
             "btn_shutter",
             "v9_shutter",
         )
@@ -731,17 +858,11 @@ class AgentAccessibilityService : AccessibilityService() {
                 }
             }
         }
-
-        val metrics = resources.displayMetrics
-        val centerX = metrics.widthPixels / 2f
-        val shutterY = metrics.heightPixels * 0.86f
-        val tapRes = tapCoordinates(centerX, shutterY)
-        Log.i(TAG, "Camera shutter fallback tap at ($centerX, $shutterY): ${tapRes.success}")
-        return tapRes.success
+        return false
     }
 
     suspend fun triggerDialerCall(): Boolean {
-        val callKeywords = listOf("call", "dial", "voice call", "sim 1", "sim 2", "make call", "phone")
+        val callKeywords = listOf("call", "dial", "voice call", "sim 1", "sim 2", "make call")
         val root = getActiveRootNode()
         if (root != null) {
             val callBtn = findNode(root) { node ->
@@ -750,7 +871,7 @@ class AgentAccessibilityService : AccessibilityService() {
                 val id = node.viewIdResourceName?.lowercase().orEmpty()
                 if (id.contains("search") || desc.contains("search") || text.contains("search")) return@findNode false
                 if (id.contains("delete") || desc.contains("delete") || text.contains("backspace")) return@findNode false
-                callKeywords.any { desc.contains(it) || text.contains(it) || id.contains(it) }
+                node.isClickable && callKeywords.any { desc.contains(it) || text.contains(it) || id.contains(it) }
             }
             if (callBtn != null) {
                 val res = clickNodeWithFallback(callBtn, "dialer call button")
@@ -760,26 +881,7 @@ class AgentAccessibilityService : AccessibilityService() {
                 }
             }
         }
-
-        val metrics = resources.displayMetrics
-        val centerX = metrics.widthPixels / 2f
-        val callY = metrics.heightPixels * 0.82f
-        val tapRes = tapCoordinates(centerX, callY)
-        Log.i(TAG, "Dialer call fallback tap at ($centerX, $callY): ${tapRes.success}")
-        return tapRes.success
-    }
-
-    private fun safeText(node: AccessibilityNodeInfo): String {
-        if (node.isPassword) return "[PROTECTED]"
-        return node.text?.toString()?.trim().orEmpty()
-    }
-
-    @Synchronized
-    private fun clearIndexedNodes() {
-        for (index in 0 until indexedNodes.size()) {
-            indexedNodes.valueAt(index)?.recycle()
-        }
-        indexedNodes.clear()
+        return false
     }
 
     private fun success(message: String) = AccessibilityActionResult(true, message)
@@ -788,19 +890,9 @@ class AgentAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val TAG = "AgentAccessibility"
-        private const val DEFAULT_MAX_NODES = 48
-        private const val MAX_FIELD_LENGTH = 80
-        private const val MAX_PARENT_SEARCH = 6
-        private const val MAX_SCREENSHOT_LONG_EDGE = 1280
+        private const val DEFAULT_MAX_NODES = 85
+        private const val MAX_PARENT_SEARCH = 3
         private const val TAP_DURATION_MS = 80L
-
-        private val SECURE_APP_PACKAGES = setOf(
-            "net.one97.paytm",
-            "com.google.android.apps.nbu.paisa.user",
-            "com.phonepe.app",
-            "org.npci.upi.security.pinverification",
-            "com.cred.android",
-        )
 
         @Volatile
         private var instance: AgentAccessibilityService? = null

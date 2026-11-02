@@ -79,6 +79,16 @@ class DirectToolExecutor(private val context: Context) {
             "get_time" -> getTime()
             "get_clipboard" -> getClipboard()
             "set_clipboard" -> setClipboard(call.arguments.optString("text"))
+            "read_recent_messages" -> readRecentMessages(
+                senderFilter = call.arguments.optString("sender"),
+                appFilter = call.arguments.optString("app"),
+                limit = call.arguments.optInt("limit", 5),
+            )
+            "reply_notification" -> replyNotification(
+                senderQuery = call.arguments.optString("sender"),
+                appQuery = call.arguments.optString("app"),
+                replyText = call.arguments.optString("text"),
+            )
             else -> ToolResult(
                 success = false,
                 message = "Unknown direct tool: ${call.name}",
@@ -693,12 +703,93 @@ class DirectToolExecutor(private val context: Context) {
 
     private fun resolveNumber(contactOrNumber: String): String? {
         val input = contactOrNumber.trim()
+        if (input.isBlank()) return null
         val digits = input.filter { it.isDigit() }
         if (digits.length >= 3) {
             val prefix = if (input.trimStart().startsWith("+")) "+" else ""
             return prefix + digits
         }
+        val contactMatches = resolveContact(input)
+        val bestMatch = contactMatches.firstOrNull { it.first.equals(input, ignoreCase = true) }
+            ?: contactMatches.firstOrNull()
+        if (bestMatch != null) {
+            val resolvedDigits = bestMatch.second.filter { it.isDigit() }
+            if (resolvedDigits.length >= 3) {
+                val prefix = if (bestMatch.second.trimStart().startsWith("+")) "+" else ""
+                return prefix + resolvedDigits
+            }
+        }
         return null
+    }
+
+    private fun readRecentMessages(
+        senderFilter: String,
+        appFilter: String,
+        limit: Int,
+    ): ToolResult {
+        val result = com.personal.harmaai.notifications.HarmaNotificationListenerService.readRecentMessages(
+            context = appContext,
+            senderFilter = senderFilter,
+            appFilter = appFilter,
+            limit = limit,
+        )
+        if (result.permissionMissing) {
+            return ToolResult.userAction(
+                Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS,
+                result.summary,
+            )
+        }
+        val itemsJson = org.json.JSONArray()
+        for (item in result.notifications) {
+            itemsJson.put(
+                JSONObject()
+                    .put("sender", item.displaySender)
+                    .put("app", item.appName)
+                    .put("package", item.packageName)
+                    .put("text", item.text)
+                    .put("canReply", item.canReply)
+                    .put("postedAt", item.postedAt),
+            )
+        }
+        return ToolResult.verified(
+            result.summary,
+            JSONObject()
+                .put("count", result.notifications.size)
+                .put("messages", itemsJson),
+            method = "notification_listener_readback",
+        )
+    }
+
+    private fun replyNotification(
+        senderQuery: String,
+        appQuery: String,
+        replyText: String,
+    ): ToolResult {
+        val result = com.personal.harmaai.notifications.HarmaNotificationListenerService.replyToNotification(
+            context = appContext,
+            senderQuery = senderQuery,
+            appQuery = appQuery,
+            replyText = replyText,
+        )
+        if (result.permissionMissing) {
+            return ToolResult.userAction(
+                Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS,
+                result.message,
+            )
+        }
+        return if (result.success) {
+            ToolResult.verified(
+                result.message,
+                JSONObject()
+                    .put("sender", result.sender)
+                    .put("app", result.appName)
+                    .put("package", result.packageName)
+                    .put("reply_text_length", replyText.length),
+                method = "notification_remote_input",
+            )
+        } else {
+            ToolResult.failure(result.message)
+        }
     }
 
     companion object {

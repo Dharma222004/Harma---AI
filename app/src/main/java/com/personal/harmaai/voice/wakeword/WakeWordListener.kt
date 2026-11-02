@@ -13,6 +13,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.sqrt
 
 class WakeWordListener(
     private val context: Context,
@@ -70,17 +71,47 @@ class WakeWordListener(
 
         workerJob = scope.launch(Dispatchers.Default) {
             val audioBuffer = ShortArray(OpenWakeWordEngine.CHUNK_SAMPLES)
+            var activeTailFrames = 0
             Log.i(TAG, "openWakeWord listener started with threshold $threshold, model: $activeModelName")
 
             while (isActive && isRunning.get()) {
                 if (isPaused.get()) {
                     consecutiveHits = 0
+                    activeTailFrames = 0
                     Thread.sleep(80L)
                     continue
                 }
 
-                val readCount = record.read(audioBuffer, 0, audioBuffer.size)
+                val currentRecord = audioRecord
+                if (currentRecord == null || currentRecord.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                    // Mic-in-use conflict or released: wait and attempt gentle re-acquisition
+                    Thread.sleep(400L)
+                    if (!isPaused.get() && isRunning.get()) {
+                        runCatching {
+                            initAudioRecord()
+                            audioRecord?.startRecording()
+                        }
+                    }
+                    continue
+                }
+
+                val readCount = currentRecord.read(audioBuffer, 0, audioBuffer.size)
                 if (readCount < audioBuffer.size) {
+                    if (readCount < 0) {
+                        // Mic temporarily in use by another app
+                        Thread.sleep(300L)
+                    }
+                    continue
+                }
+
+                // Low-power RMS energy pre-gate: skip heavy ONNX inference during room silence
+                val rms = computeRms(audioBuffer)
+                if (rms >= SILENCE_RMS_GATE) {
+                    activeTailFrames = ACTIVE_TAIL_FRAMES
+                } else if (activeTailFrames > 0) {
+                    activeTailFrames--
+                } else if (consecutiveHits == 0) {
+                    onScoreUpdate?.invoke(0f, threshold)
                     continue
                 }
 
@@ -100,6 +131,7 @@ class WakeWordListener(
                     if (consecutiveHits >= REQUIRED_CONSECUTIVE_FRAMES && now - lastTriggerAt >= COOLDOWN_MS) {
                         lastTriggerAt = now
                         consecutiveHits = 0
+                        activeTailFrames = 0
                         engine?.reset()
                         Log.i(TAG, ">>> Wake word triggered! Score: $score, model: $activeModelName <<<")
                         onWakeWordDetected(activeModelName)
@@ -109,6 +141,15 @@ class WakeWordListener(
                 }
             }
         }
+    }
+
+    private fun computeRms(samples: ShortArray): Double {
+        var sumSq = 0.0
+        for (s in samples) {
+            val v = s.toDouble()
+            sumSq += v * v
+        }
+        return sqrt(sumSq / samples.size.coerceAtLeast(1))
     }
 
     fun pause() {
@@ -154,6 +195,10 @@ class WakeWordListener(
 
     @SuppressLint("MissingPermission")
     private fun initAudioRecord() {
+        runCatching {
+            audioRecord?.stop()
+            audioRecord?.release()
+        }
         val minBufferSize = AudioRecord.getMinBufferSize(
             OpenWakeWordEngine.SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
@@ -162,7 +207,7 @@ class WakeWordListener(
         val bufferSize = minBufferSize.coerceAtLeast(OpenWakeWordEngine.CHUNK_SAMPLES * 4 * 2)
 
         audioRecord = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
             OpenWakeWordEngine.SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
@@ -174,6 +219,7 @@ class WakeWordListener(
         private const val TAG = "HarmaWake"
         private const val REQUIRED_CONSECUTIVE_FRAMES = 2
         private const val COOLDOWN_MS = 2000L
+        private const val SILENCE_RMS_GATE = 75.0
+        private const val ACTIVE_TAIL_FRAMES = 14
     }
 }
-

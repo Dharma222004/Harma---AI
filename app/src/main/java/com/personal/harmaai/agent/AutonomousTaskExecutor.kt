@@ -60,18 +60,27 @@ class AutonomousTaskExecutor(
         // 3. YouTube Play: "open youtube and play <song>", "play <song> on youtube"
         val ytPlayQuery = LocalCommandRouter.extractYouTubePlay(lower)
         if (ytPlayQuery != null) {
+            if (!com.personal.harmaai.network.NetworkMonitor.isCurrentlyOnline(appContext)) {
+                return AutonomousResult.NotHandled
+            }
             return executeYouTubePlay(ytPlayQuery, taskId, sessionId)
         }
 
         // 4. WhatsApp: "send birthday wishes to <name>", "whatsapp <name>"
         val waTarget = LocalCommandRouter.extractWhatsAppTarget(trimmed)
         if (waTarget != null) {
+            if (!com.personal.harmaai.network.NetworkMonitor.isCurrentlyOnline(appContext)) {
+                return AutonomousResult.NotHandled
+            }
             return executeWhatsAppMessage(waTarget.first, waTarget.second, taskId, sessionId)
         }
 
         // 5. YouTube search: "search cats on youtube"
         val ytQuery = LocalCommandRouter.extractYouTubeSearch(lower)
         if (ytQuery != null) {
+            if (!com.personal.harmaai.network.NetworkMonitor.isCurrentlyOnline(appContext)) {
+                return AutonomousResult.NotHandled
+            }
             return executeYouTubeSearch(ytQuery, taskId, sessionId)
         }
 
@@ -221,13 +230,22 @@ class AutonomousTaskExecutor(
 
     /**
      * Phone Call Task: Observe -> Plan -> Act -> Verify
-     * Step 1: Check CALL_PHONE permission.
+     * Step 1: Resolve contact name if not already a phone number, and check CALL_PHONE permission.
      * Step 2: If granted, call directly with ACTION_CALL.
      *         If not granted, open dialer with ACTION_DIAL and click Call button via Accessibility.
      * Step 3: Verify call active via TelephonyManager or In-Call UI.
      */
     private suspend fun executePhoneCall(targetNumber: String, taskId: String, sessionId: String): AutonomousResult {
-        Log.i(TAG, "[$taskId] Starting Phone Call to $targetNumber: Observe -> Plan -> Act -> Verify")
+        val resolvedNumber = resolveContactPhoneNumber(targetNumber) ?: targetNumber.trim()
+        Log.i(TAG, "[$taskId] Starting Phone Call to $targetNumber (resolved: $resolvedNumber): Observe -> Plan -> Act -> Verify")
+
+        val digitsOnly = resolvedNumber.filter { it.isDigit() }
+        if (digitsOnly.length < 3) {
+            return AutonomousResult.Failure(
+                "Could not find a phone number for '$targetNumber'. Please grant Contacts permission or provide the phone number.",
+                1,
+            )
+        }
 
         val hasCallPhone = ContextCompat.checkSelfPermission(
             appContext,
@@ -239,8 +257,8 @@ class AutonomousTaskExecutor(
 
         if (hasCallPhone) {
             AgentRuntime.setRunningStep(1, "Calling $targetNumber...", "Placing direct call via telecom")
-            Log.i(TAG, "[$taskId] [Step 1/2] Action: ACTION_CALL directly for $targetNumber")
-            val callIntent = Intent(Intent.ACTION_CALL, Uri.parse("tel:${Uri.encode(targetNumber)}")).apply {
+            Log.i(TAG, "[$taskId] [Step 1/2] Action: ACTION_CALL directly for $resolvedNumber")
+            val callIntent = Intent(Intent.ACTION_CALL, Uri.parse("tel:${Uri.encode(resolvedNumber)}")).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             try {
@@ -252,8 +270,8 @@ class AutonomousTaskExecutor(
         } else {
             // Fallback: Open dialer and click Call button via accessibility
             AgentRuntime.setRunningStep(1, "Opening dialer for $targetNumber...", "Dialing number")
-            Log.i(TAG, "[$taskId] [Step 1/2] Action: ACTION_DIAL fallback for $targetNumber")
-            val dialIntent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${Uri.encode(targetNumber)}")).apply {
+            Log.i(TAG, "[$taskId] [Step 1/2] Action: ACTION_DIAL fallback for $resolvedNumber")
+            val dialIntent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${Uri.encode(resolvedNumber)}")).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             try {
@@ -316,6 +334,39 @@ class AutonomousTaskExecutor(
         }
     }
 
+    private fun resolveContactPhoneNumber(contactOrNumber: String): String? {
+        val trimmed = contactOrNumber.trim()
+        val directDigits = trimmed.filter { it.isDigit() }
+        if (directDigits.length >= 3) {
+            val prefix = if (trimmed.startsWith("+")) "+" else ""
+            return prefix + directDigits
+        }
+        if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+            return null
+        }
+        val uri = android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI
+        val projection = arrayOf(
+            android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+            android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER,
+        )
+        val selection = "${android.provider.ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?"
+        val selectionArgs = arrayOf("%$trimmed%")
+        try {
+            appContext.contentResolver.query(uri, projection, selection, selectionArgs, null)?.use { cursor ->
+                val numCol = cursor.getColumnIndex(android.provider.ContactsContract.CommonDataKinds.Phone.NUMBER)
+                if (cursor.moveToFirst() && numCol >= 0) {
+                    val raw = cursor.getString(numCol).orEmpty().trim()
+                    val digits = raw.filter { it.isDigit() }
+                    if (digits.length >= 3) {
+                        val prefix = if (raw.startsWith("+")) "+" else ""
+                        return prefix + digits
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return null
+    }
+
     /**
      * Open App Task: Observe -> Plan -> Act -> Verify
      * Step 1: Launch package.
@@ -357,25 +408,50 @@ class AutonomousTaskExecutor(
 
     /**
      * YouTube Play: Observe -> Plan -> Act -> Verify
-     * Step 1: Open YouTube app.
-     * Step 2: Click search, enter song query.
-     * Step 3: Tap first video result (skip ads/shorts).
+     * Step 1: Open YouTube search results for the requested song/video.
+     * Step 2: Settle results and dismiss any prompt.
+     * Step 3: Tap first video result (skip ads/shorts/search bar).
      * Step 4: Verify playback via AudioManager.isMusicActive or player controls.
      */
     private suspend fun executeYouTubePlay(song: String, taskId: String, sessionId: String): AutonomousResult {
         Log.i(TAG, "[$taskId] Starting YouTube Play for '$song'")
         val accessibility = AgentAccessibilityService.current()
 
-        // Step 1: Open YouTube
-        AgentRuntime.setRunningStep(1, "Opening YouTube...", "Launching YouTube application")
+        // Step 1: Open YouTube directly to search results for the song
+        AgentRuntime.setRunningStep(1, "Opening YouTube...", "Searching for '$song'")
         val ytPkg = "com.google.android.youtube"
-        val ytIntent = appContext.packageManager.getLaunchIntentForPackage(ytPkg)?.apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
-        }
-        if (ytIntent != null) {
-            try { appContext.startActivity(ytIntent) } catch (_: Exception) {}
-        } else {
+        val hasYt = appContext.packageManager.getLaunchIntentForPackage(ytPkg) != null
+        if (!hasYt) {
             return executeYouTubeSearch(song, taskId, sessionId)
+        }
+
+        val directSearchIntent = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(song)}"),
+        ).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            setPackage(ytPkg)
+        }
+        val launched = try {
+            appContext.startActivity(directSearchIntent)
+            true
+        } catch (_: Exception) {
+            val ytIntent = appContext.packageManager.getLaunchIntentForPackage(ytPkg)?.apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+            }
+            if (ytIntent != null) {
+                try {
+                    appContext.startActivity(ytIntent)
+                    true
+                } catch (_: Exception) {
+                    false
+                }
+            } else {
+                false
+            }
+        }
+        if (!launched) {
+            return AutonomousResult.Failure("YouTube app could not be launched.", 1)
         }
 
         val inFg = accessibility?.awaitForegroundPackage(ytPkg, timeoutMs = 5000L) ?: run {
@@ -387,60 +463,32 @@ class AutonomousTaskExecutor(
         }
         AgentRuntime.completeLastStep(true, "YouTube opened")
 
-        // Step 2: Search for song
-        AgentRuntime.setRunningStep(2, "Searching for '$song'...", "Opening search and entering title")
-        delay(800L)
+        // Step 2: Wait for search results to load (or type into search if fallback launch was used)
+        AgentRuntime.setRunningStep(2, "Loading results for '$song'...", "Preparing video list")
+        delay(1200L)
         accessibility?.dismissPermissionOrDialogIfPresent()
-
-        var searchClicked = false
-        if (accessibility != null) {
-            val root = accessibility.getActiveRootNode()
-            if (root != null) {
-                val searchBtn = accessibility.findNode(root) { node ->
-                    val desc = node.contentDescription?.toString()?.lowercase().orEmpty()
-                    val id = node.viewIdResourceName?.lowercase().orEmpty()
-                    desc.contains("search") || id.contains("menu_item_0") || id.contains("search_button")
-                }
-                if (searchBtn != null) {
-                    searchClicked = accessibility.clickNodeWithFallback(searchBtn, "YouTube search").success
-                }
-            }
-        }
-        if (!searchClicked) {
-            val directSearchIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode(song)}")).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                setPackage(ytPkg)
-            }
-            try { appContext.startActivity(directSearchIntent) } catch (_: Exception) {}
-        } else {
-            delay(600L)
-            val root = accessibility?.getActiveRootNode()
-            if (root != null) {
-                val editNode = accessibility.findNode(root) { it.isEditable || it.className?.contains("EditText") == true }
-                if (editNode != null) {
-                    val index = accessibility.captureObservation().nodes.firstOrNull { it.editable }?.index ?: 0
-                    accessibility.setNodeText(index, song)
-                    delay(300L)
-                }
-            }
-        }
         AgentRuntime.completeLastStep(true, "Search results loaded")
 
         // Step 3: Tap first video result
         AgentRuntime.setRunningStep(3, "Selecting first video result...", "Tapping video to play")
-        delay(1500L)
+        delay(1000L)
         var videoTapped = false
         if (accessibility != null) {
             val obs = accessibility.captureObservation()
             val candidate = obs.nodes.firstOrNull { node ->
                 val desc = node.contentDescription.lowercase()
                 val text = node.text.lowercase()
-                val isAd = desc.contains("ad") || text.contains("ad") || desc.contains("sponsored")
-                val isShort = desc.contains("short") || text.contains("short")
-                node.clickable && !isAd && !isShort && (desc.isNotBlank() || text.isNotBlank())
+                val id = node.viewId.lowercase()
+                val isAd = desc.contains("sponsored") || text.contains("sponsored") || desc.startsWith("ad ")
+                val isShort = desc.contains("shorts") || text.contains("shorts") || id.contains("reel")
+                val isChromeOrFilter = id.contains("search") || id.contains("chip") || id.contains("filter") ||
+                    desc == "search" || desc == "voice search" || desc == "cast" || desc == "notifications" ||
+                    desc.contains("navigate up") || desc.contains("more options") || desc.contains("account")
+                node.clickable && !node.editable && !isAd && !isShort && !isChromeOrFilter &&
+                    (desc.length > 8 || text.length > 8)
             }
             if (candidate != null) {
-                val clickRes = accessibility.tapNode(candidate.index)
+                val clickRes = accessibility.tapNodeWithFallback(candidate.index)
                 videoTapped = clickRes.success
             }
             if (!videoTapped) {
@@ -488,7 +536,7 @@ class AutonomousTaskExecutor(
             val args = JSONObject().put("recipient", recipientName).put("message", generatedMessage)
             val approved = AgentRuntime.requestConfirmation(
                 toolName = "send_message",
-                description = "Send birthday wish to $recipientName: \"$generatedMessage\"?",
+                description = "Send WhatsApp message to $recipientName: \"$generatedMessage\"?",
                 arguments = args.toString(),
             )
             if (!approved) {
@@ -497,17 +545,39 @@ class AutonomousTaskExecutor(
             AgentRuntime.completeLastStep(true, "Message confirmed")
         }
 
-        // Step 2: Open Chat
+        // Fast Background Path: If there is an active WhatsApp notification from this recipient
+        // with an Android RemoteInput action, send the reply directly in the background without opening WhatsApp!
+        if (com.personal.harmaai.notifications.HarmaNotificationListenerService.hasReplyableNotification(recipientName, "whatsapp")) {
+            AgentRuntime.setRunningStep(2, "Replying via notification...", "Sending instant background reply via RemoteInput")
+            val bgReply = com.personal.harmaai.notifications.HarmaNotificationListenerService.replyToNotification(
+                context = appContext,
+                senderQuery = recipientName,
+                appQuery = "whatsapp",
+                replyText = generatedMessage,
+            )
+            if (bgReply.success) {
+                AgentRuntime.completeLastStep(true, bgReply.message)
+                return AutonomousResult.Success(bgReply.message)
+            }
+        }
+
+        // Step 2: Open Chat (prefer direct phone number deep link if number is provided or resolved from Contacts)
         AgentRuntime.setRunningStep(2, "Opening chat for $recipientName...", "Locating chat in WhatsApp")
-        val digits = recipientName.filter { it.isDigit() }
+        val resolvedPhone = resolveContactPhoneNumber(recipientName)?.filter { it.isDigit() }.orEmpty()
+        var prefilledViaDeepLink = false
         var chatOpened = false
-        if (digits.length >= 7) {
-            val waIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://api.whatsapp.com/send?phone=$digits&text=${Uri.encode(generatedMessage)}")).apply {
+
+        if (resolvedPhone.length >= 7) {
+            val waIntent = Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse("https://api.whatsapp.com/send?phone=$resolvedPhone&text=${Uri.encode(generatedMessage)}"),
+            ).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 setPackage("com.whatsapp")
             }
             try {
                 appContext.startActivity(waIntent)
+                prefilledViaDeepLink = true
                 chatOpened = true
             } catch (_: Exception) {}
         }
@@ -519,28 +589,57 @@ class AutonomousTaskExecutor(
             if (waLaunchIntent != null) {
                 try {
                     appContext.startActivity(waLaunchIntent)
-                    delay(1200L)
+                    accessibility?.awaitForegroundPackage("com.whatsapp", 4000L) ?: delay(1200L)
                     accessibility?.dismissPermissionOrDialogIfPresent()
-                    val searchNode = accessibility?.waitForNode(3000L) { node ->
-                        val desc = node.contentDescription?.toString()?.lowercase().orEmpty()
-                        val id = node.viewIdResourceName?.lowercase().orEmpty()
-                        desc.contains("search") || id.contains("menuitem_search")
-                    }
-                    if (searchNode != null) {
-                        accessibility?.clickNodeWithFallback(searchNode, "WhatsApp search")
-                        delay(600L)
-                        accessibility?.clickByText(recipientName)
+
+                    // First check if the contact is already visible on the main chat list
+                    val directClick = accessibility?.clickByText(recipientName)
+                    if (directClick?.success == true) {
                         chatOpened = true
+                    } else if (accessibility != null) {
+                        val searchNode = accessibility.waitForNode(3000L) { node ->
+                            val desc = node.contentDescription?.toString()?.lowercase().orEmpty()
+                            val id = node.viewIdResourceName?.lowercase().orEmpty()
+                            desc.contains("search") || id.contains("menuitem_search") || id.contains("search_bar")
+                        }
+                        if (searchNode != null) {
+                            accessibility.clickNodeWithFallback(searchNode, "WhatsApp search")
+                            delay(500L)
+                            accessibility.setNodeText(-1, recipientName)
+                            delay(800L)
+                            // Click the contact result (not the editable search bar)
+                            val root = accessibility.getActiveRootNode()
+                            val contactNode = if (root != null) {
+                                accessibility.findNode(root) { node ->
+                                    val isEdit = node.isEditable || node.className?.toString().orEmpty().contains("EditText", ignoreCase = true)
+                                    val txt = node.text?.toString().orEmpty()
+                                    !isEdit && txt.contains(recipientName, ignoreCase = true)
+                                }
+                            } else null
+                            if (contactNode != null) {
+                                accessibility.clickNodeWithFallback(contactNode, "contact $recipientName")
+                                chatOpened = true
+                            }
+                        }
                     }
                 } catch (_: Exception) {}
             }
         }
 
-        delay(1200L)
+        if (!chatOpened) {
+            return AutonomousResult.Failure("Could not open WhatsApp chat for '$recipientName'.", 2)
+        }
+
+        delay(1000L)
         AgentRuntime.completeLastStep(true, "Chat opened")
 
-        // Step 3: Tap send button
-        AgentRuntime.setRunningStep(3, "Sending message...", "Tapping send button")
+        // Step 3: Enter message text (if not pre-filled via deep link) and tap Send button
+        AgentRuntime.setRunningStep(3, "Sending message...", "Entering text and tapping Send")
+        if (!prefilledViaDeepLink && accessibility != null) {
+            accessibility.setNodeText(-1, generatedMessage)
+            delay(400L)
+        }
+
         var sendTapped = false
         if (accessibility != null) {
             val root = accessibility.getActiveRootNode()
@@ -548,7 +647,7 @@ class AutonomousTaskExecutor(
                 val sendBtn = accessibility.findNode(root) { node ->
                     val desc = node.contentDescription?.toString()?.lowercase().orEmpty()
                     val id = node.viewIdResourceName?.lowercase().orEmpty()
-                    desc.contains("send") || id.contains("send")
+                    desc == "send" || id.endsWith("/send") || id.contains("send_btn")
                 }
                 if (sendBtn != null) {
                     sendTapped = accessibility.clickNodeWithFallback(sendBtn, "Send button").success
@@ -569,8 +668,8 @@ class AutonomousTaskExecutor(
         }
 
         return if (sentConfirmed || sendTapped) {
-            AgentRuntime.completeLastStep(true, "Birthday wish sent to $recipientName")
-            AutonomousResult.Success("Birthday wish sent to $recipientName on WhatsApp.")
+            AgentRuntime.completeLastStep(true, "Message sent to $recipientName")
+            AutonomousResult.Success("Message sent to $recipientName on WhatsApp.")
         } else {
             AutonomousResult.Failure("Could not confirm WhatsApp message delivery.", 4)
         }

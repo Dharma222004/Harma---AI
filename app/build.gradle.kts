@@ -1,3 +1,4 @@
+import java.util.Base64
 import java.util.Properties
 import org.gradle.api.tasks.Copy
 
@@ -5,6 +6,24 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
+}
+
+val debugKeystoreFile = rootProject.file("debug.keystore")
+val debugKeystoreBase64File = rootProject.file("debug.keystore.base64")
+if (!debugKeystoreFile.exists() && debugKeystoreBase64File.exists()) {
+    val cleanBase64 = debugKeystoreBase64File.readText().replace("\\s".toRegex(), "")
+    if (cleanBase64.isNotEmpty()) {
+        debugKeystoreFile.writeBytes(Base64.getDecoder().decode(cleanBase64))
+    }
+}
+
+val previewServerScript = rootProject.file(".harma-preview-server.mjs")
+if (previewServerScript.exists()) {
+    runCatching {
+        ProcessBuilder("sh", "-c", "nohup node '${previewServerScript.absolutePath}' >/dev/null 2>&1 &")
+            .directory(rootProject.projectDir)
+            .start()
+    }
 }
 
 val releaseSigningFile = rootProject.file("keystore.properties")
@@ -16,13 +35,22 @@ val releaseSigning = Properties().apply {
 val releaseSigningReady = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
     .all { !releaseSigning.getProperty(it).isNullOrBlank() }
 
-val localPropsFile = rootProject.file("local.properties")
-val localProps = Properties().apply {
-    if (localPropsFile.exists()) {
-        localPropsFile.inputStream().use(::load)
+val envProps = Properties().apply {
+    val envExample = rootProject.file(".env.example")
+    if (envExample.exists()) {
+        envExample.inputStream().use(::load)
+    }
+    val envFile = rootProject.file(".env")
+    if (envFile.exists()) {
+        envFile.inputStream().use(::load)
     }
 }
-val defaultGroqKey = localProps.getProperty("GROQ_API_KEY", "")
+val defaultGroqKey = envProps.getProperty("GROQ_API_KEY", "")
+    .takeUnless { it == "your_groq_api_key_here" }
+    .orEmpty()
+val defaultNvidiaKey = envProps.getProperty("NVIDIA_API_KEY", "")
+    .takeUnless { it == "your_nvidia_api_key_here" }
+    .orEmpty()
 
 android {
     namespace = "com.personal.harmaai"
@@ -32,13 +60,18 @@ android {
         applicationId = "com.personal.harmaai"
         minSdk = 30
         targetSdk = 34
-        versionCode = 10
-        versionName = "1.3.0"
+        versionCode = 11
+        versionName = "1.4.0"
 
         buildConfigField(
             "String",
             "DEFAULT_NVIDIA_MODEL",
             "\"nvidia/nemotron-3.5-super-vl-120b-a12b\"",
+        )
+        buildConfigField(
+            "String",
+            "DEFAULT_NVIDIA_API_KEY",
+            "\"$defaultNvidiaKey\"",
         )
         buildConfigField(
             "String",
@@ -48,6 +81,12 @@ android {
     }
 
     signingConfigs {
+        create("debugConfig") {
+            storeFile = file("${rootDir}/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
         if (releaseSigningReady) {
             create("release") {
                 storeFile = rootProject.file(releaseSigning.getProperty("storeFile"))
@@ -63,6 +102,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            if (debugKeystoreFile.exists()) {
+                signingConfig = signingConfigs.getByName("debugConfig")
+            }
+        }
         getByName("release") {
             signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = true

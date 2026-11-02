@@ -74,3 +74,74 @@ interface MemoryDao {
     @Query("DELETE FROM agent_memories")
     suspend fun clear()
 }
+
+@Dao
+interface QueuedTaskDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(task: QueuedTaskEntity)
+
+    @Query(
+        "SELECT * FROM offline_task_queue " +
+            "WHERE status = 'PENDING' AND expiresAt > :now " +
+            "ORDER BY createdAt ASC",
+    )
+    suspend fun getPendingValid(now: Long = System.currentTimeMillis()): List<QueuedTaskEntity>
+
+    @Query(
+        "SELECT * FROM offline_task_queue " +
+            "WHERE status = 'PENDING' AND LOWER(command) = LOWER(:command) LIMIT 1",
+    )
+    suspend fun findDuplicatePending(command: String): QueuedTaskEntity?
+
+    @Query(
+        "UPDATE offline_task_queue SET status = :status, retryCount = :retryCount WHERE id = :id",
+    )
+    suspend fun updateStatus(id: String, status: String, retryCount: Int)
+
+    @Query(
+        "UPDATE offline_task_queue SET status = 'EXPIRED' WHERE status = 'PENDING' AND expiresAt <= :now",
+    )
+    suspend fun expireStale(now: Long = System.currentTimeMillis()): Int
+
+    @Query("UPDATE offline_task_queue SET status = 'CANCELLED' WHERE status = 'PENDING'")
+    suspend fun cancelAllPending()
+
+    @Query("SELECT * FROM offline_task_queue WHERE status = 'PENDING' ORDER BY createdAt ASC")
+    fun observePending(): Flow<List<QueuedTaskEntity>>
+}
+
+@Dao
+interface LearnedMacroDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(macro: LearnedMacroEntity)
+
+    @Query("SELECT * FROM learned_ui_macros WHERE normalizedCommand = :normalizedCommand LIMIT 1")
+    suspend fun findByNormalizedCommand(normalizedCommand: String): LearnedMacroEntity?
+
+    @Query("SELECT * FROM learned_ui_macros ORDER BY successCount DESC, updatedAt DESC LIMIT :limit")
+    suspend fun getRecent(limit: Int = 50): List<LearnedMacroEntity>
+
+    @Query(
+        "UPDATE learned_ui_macros " +
+            "SET successCount = successCount + 1, failureCount = 0, updatedAt = :now " +
+            "WHERE normalizedCommand = :normalizedCommand",
+    )
+    suspend fun recordReplaySuccess(
+        normalizedCommand: String,
+        now: Long = System.currentTimeMillis(),
+    )
+
+    @Query(
+        "UPDATE learned_ui_macros " +
+            "SET failureCount = failureCount + 1, updatedAt = :now " +
+            "WHERE normalizedCommand = :normalizedCommand",
+    )
+    suspend fun recordReplayFailure(
+        normalizedCommand: String,
+        now: Long = System.currentTimeMillis(),
+    )
+
+    @Query("DELETE FROM learned_ui_macros WHERE normalizedCommand = :normalizedCommand")
+    suspend fun deleteByNormalizedCommand(normalizedCommand: String)
+}
+

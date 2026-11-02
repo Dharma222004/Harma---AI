@@ -227,6 +227,32 @@ object DirectToolCatalog {
                 required = listOf("text"),
             ),
         ),
+        ToolSpec(
+            name = "read_recent_messages",
+            description = "Read recent incoming messages and notifications (WhatsApp, Telegram, Instagram, SMS, etc.) without opening any app.",
+            risk = ToolRisk.SAFE,
+            parameters = schema(
+                properties = mapOf(
+                    "sender" to string("Optional sender or contact name filter (e.g. Rahul, Mom)."),
+                    "app" to string("Optional app filter (e.g. WhatsApp, Telegram, Instagram, Messages)."),
+                    "limit" to integer("Maximum number of messages to read (default 5)."),
+                ),
+                required = emptyList(),
+            ),
+        ),
+        ToolSpec(
+            name = "reply_notification",
+            description = "Send an instant background reply to a recent message notification via Android RemoteInput without unlocking or opening the app.",
+            risk = ToolRisk.SENSITIVE,
+            parameters = schema(
+                properties = mapOf(
+                    "sender" to string("Sender or contact name from the notification (or leave empty to reply to the latest message)."),
+                    "app" to string("Optional app name filter (e.g. WhatsApp, Telegram, Instagram, Messages)."),
+                    "text" to string("Reply message text to send."),
+                ),
+                required = listOf("text"),
+            ),
+        ),
     )
 
     private val specsByName = specs.associateBy(ToolSpec::name)

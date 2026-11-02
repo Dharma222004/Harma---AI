@@ -83,7 +83,10 @@ class HarmaAgentService : Service() {
             orchestrator.run(command, sessionId)
             withContext(Dispatchers.Main) {
                 val state = AgentRuntime.state.value
-                if (app.settings.ttsEnabled && state.status == AgentStatus.COMPLETED) {
+                val shouldSpeak = app.settings.ttsEnabled &&
+                    (state.status == AgentStatus.COMPLETED || state.status == AgentStatus.WAITING_FOR_USER)
+                if (shouldSpeak) {
+                    tts?.setSpeechParameters(app.settings.speechRate, app.settings.speechPitch)
                     val spoken = state.messages.lastOrNull()?.text?.let { message ->
                         tts?.speak(message) { finishServiceRun() }
                     } == true

@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Application
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
+import com.personal.harmaai.agent.OfflineTaskQueueManager
 import com.personal.harmaai.data.HarmaDatabase
 import com.personal.harmaai.data.SettingsStore
 import com.personal.harmaai.tools.AppListCache
@@ -22,6 +23,7 @@ class HarmaAiApplication : Application() {
         settings
         database
         AppListCache.initialize(this, appScope)
+        OfflineTaskQueueManager.initialize(this, database)
         if (settings.alwaysListenEnabled &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED

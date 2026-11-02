@@ -61,6 +61,11 @@ interface AgentLlmClient {
 }
 
 object AgentConversation {
+    private fun formatObservation(observation: ScreenObservation?): String {
+        if (observation == null) return "Accessibility service is not connected."
+        return observation.compactText.ifBlank { observation.compactJson }
+    }
+
     fun initialMessage(
         task: String,
         observation: ScreenObservation?,
@@ -71,7 +76,7 @@ object AgentConversation {
             append("User task: ").append(task)
             if (memory.isNotBlank()) append("\nRelevant local memory:\n").append(memory)
             append("\nCurrent phone observation:\n")
-            append(observation?.compactJson ?: "Accessibility service is not connected.")
+            append(formatObservation(observation))
         },
         jpegBase64 = screenshotBase64,
     )
@@ -93,7 +98,7 @@ object AgentConversation {
             .put("data", result.data)
             .put(
                 "newScreen",
-                observation?.compactJson ?: "Accessibility service is not connected.",
+                formatObservation(observation),
             )
 
         return buildList {
@@ -107,7 +112,7 @@ object AgentConversation {
             if (screenshotBase64.isNotBlank()) {
                 add(
                     AgentMessage.User(
-                        text = "Updated phone screenshot after ${call.name}. Use it with the tool result and accessibility observation to verify the next action.",
+                        text = "Updated phone screenshot (with numbered [id] Set-of-Marks) after ${call.name}. Use it with the tool result and accessibility observation to verify the next action.",
                         jpegBase64 = screenshotBase64,
                     ),
                 )

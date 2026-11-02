@@ -24,7 +24,7 @@ class SettingsStore(context: Context) {
     )
 
     var apiKey: String
-        get() = preferences.getString(KEY_API_KEY, "").orEmpty()
+        get() = preferences.getString(KEY_API_KEY, BuildConfig.DEFAULT_NVIDIA_API_KEY).orEmpty()
         set(value) = preferences.edit().putString(KEY_API_KEY, value.trim()).apply()
 
     var groqApiKey: String
