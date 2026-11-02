@@ -1,3 +1,0 @@
-"""
-Harma Configuration Package
-"""

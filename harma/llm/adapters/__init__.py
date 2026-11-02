@@ -1,3 +1,0 @@
-"""
-Harma LLM Adapters Package
-"""
